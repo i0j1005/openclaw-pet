@@ -67,29 +67,53 @@ The pet speaks the Gateway WebSocket protocol (v4) directly:
 
 ### Events → character state (no polling, no extra prompts)
 
-The pet does **not** advertise the `session-scoped-events` capability, so the Gateway pushes `chat` and
-`agent` events for every session this operator can read: the main session, Discord/Telegram-driven sessions,
-dashboard sessions, and so on. From those it derives:
+The pet listens to three kinds of Gateway pushes (all metadata-only):
+
+- `sessions.subscribe` gives it `sessions.changed` events for every session this operator can read, including
+  the `chat.run.started` / `chat.run.settled` reasons and the `hasActiveRun` flag.
+- `sessions.messages.subscribe` on the session the quick chat targets gives it `session.message` transcript
+  events: the authoritative reply text, whatever runtime produced it (embedded runner, Claude CLI runtime, resumed
+  or recovered runs).
+- The plain `chat` / `agent` / `session.tool` broadcasts, when the Gateway projects them.
+
+From those it derives:
 
 | Gateway signal | Pet state |
 |---|---|
-| `chat` `status`/`delta`, `agent` lifecycle `start` | **thinking** |
-| `agent` `tool` stream `start` (until the tool ends) | **working** |
-| `chat` `final` whose text ends with `?` or asks the user something | **question** |
-| `chat` `final` that reports success (`done`, `✅`, `완료`…) | **happy** |
+| `chat.send` accepted, `sessions.changed` `chat.run.started` / `hasActiveRun`, a user transcript entry, `chat` `status`/`delta`, `agent` lifecycle `start` | **thinking** |
+| `agent` / `session.tool` `tool` stream `start` (until the tool ends) | **working** (only visible for the pet's own quick chats; the Gateway sends tool events to the run's sender) |
+| Reply (via `session.message` or `chat` `final`) whose text ends with `?` or asks the user something | **question** |
+| Reply that reports success (`done`, `✅`, `완료`…) | **happy** |
+| Reply that compliments you (`great question`, `잘하셨어요`) | **praise** |
+| Reply that cheers you on (`you can do it`, `화이팅`) | **encourage** |
+| Bashful reply (`*blushes*`, `부끄럽네요`, 😳) | **shy** |
+| Bad news or sympathy (`sorry to hear`, `unfortunately`, `안타깝게도`) | **sad** |
+| Worn-out reply (`phew`, `that was a lot`, `힘들었어요`) | **tired** |
 | `chat` `error`, or a reply that opens with a failure | **error** |
 | `session.observer` digest with `waiting-on-user` | **question** |
 | No connection while OpenClaw is ON | **offline** |
 
 Cron, heartbeat, webhook and internal model-probe sessions are ignored. The heuristics live in
-`src/main/openclaw/reactions.ts` and are covered by unit tests. **No LLM call is ever made to decide a mood.**
+`src/main/openclaw/reactions.ts` (Korean + English regexes, most specific first: question > error > shy >
+praise > encourage > tired > sad > happy) and are covered by unit tests. **No LLM call is ever made to decide a mood.**
+
+Precedence on screen: dragging > pressed > drop > working > thinking > reaction > hover > offline > idle.
+Activity and reactions deliberately beat hover, because the mouse is usually still over the character right
+after sending from the quick chat.
 
 ### Quick chat
 
 `chat.send` is the only method in the whole app that starts an agent turn. It targets the session with the
 most recent real user interaction (`lastInteractionAt`, from `sessions.subscribe` / `sessions.changed`),
 excluding automation sessions, so it continues where you left off in Discord, the web chat, etc.
-The reply is shown as a short status line under the input; the character reacts as above.
+
+After Enter the input bar disappears and a **speech bubble** under the character shows your message and the
+reply, updated live (Thinking…, Working on it…, streamed text, the final reply, or an error). The bubble stays
+until you send the next message. Click it to collapse it to a small pill (click again to expand); drag the
+grip in its bottom-right corner to resize it (longer replies scroll inside). The size and collapsed state are
+remembered. The transparent pet window grows and shrinks around the character to fit the bubble and still
+lets clicks through on empty areas; if there is no room below, the window is nudged up only while the bubble
+needs it. Slash commands such as `/status` are handled by the Gateway and show their output in the bubble too.
 
 ### Toggle
 
@@ -114,7 +138,8 @@ To revoke the pet later: `openclaw devices list`, then `openclaw devices remove 
 ## Using the pet
 
 - **Move**: drag the character. It never goes fully off-screen and the position is remembered.
-- **Quick chat**: hover the character (or click it on a trackpad) → type → Enter. `Esc` closes it.
+- **Quick chat**: hover the character (or click it on a trackpad) → type → Enter. `Esc` closes it. The reply
+  appears in a speech bubble under the character (click to collapse, drag the corner to resize).
 - **Settings**: right-click the character, or tray menu → Settings…
 - **Hide / show**: tray menu.
 - **Mouse reactions**: hover, pressed, dragging and a short landing bounce after a drop. These are local.
@@ -128,8 +153,19 @@ Clicks on transparent parts of the pet window fall through to whatever is undern
 - **General**: OpenClaw on/off (+ a plain-language hint if it cannot connect), Launch at login, Always on top.
 - **Character**: pick, Add Character (name → image → done), Rename, Duplicate, Delete, Import folder, Show files, Size slider.
 - **Assets**: one row per state with a preview, **Change…**, **Clear**, and drag-and-drop of an image onto the row.
-- **Behavior**: Reactions on/off, Hover chat on/off, reaction length.
+- **Behavior**:
+  - Reactions on/off, Hover chat on/off, **Reset size** for the speech bubble.
+  - **Ambient motion**: one row per state (Idle breathing, Thinking swaying, Working bouncing, Question head
+    tilt) with its own switch, **Intensity** (20–250 %) and **Speed** (0.25–3×). All off by default: a looping
+    transform on a transparent always-on-top window keeps the GPU slightly busy. Implemented as CSS custom
+    properties (`--amb-i`, `--amb-speed`) on the existing keyframes, no JavaScript animation loop.
+  - **Reaction length**: one slider per reaction (Happy, Praise, Encourage, Shy, Sad, Tired, Error, Question),
+    1–30 s. Defaults: 7 s for happy/praise/encourage, 4 s shy, 8 s sad/tired, 10 s error, 12 s question.
 - **OpenClaw connection (advanced)**: auto / manual URL, token, password.
+
+Settings live in `settings.json` in the app data folder and carry a `settingsVersion`. Files from the first
+release (single `ambientMotionEnabled` / `reactionDurationMs`) are migrated on load: the old toggle enables
+all four ambient rows, the old duration becomes the happy/error/question hold time.
 
 ## Characters and assets
 
@@ -146,9 +182,12 @@ but it is deliberately simple so packs can be shared by copying a folder:
 
 - `<app data>` is `~/Library/Application Support/openclaw-pet` on macOS and `%APPDATA%\openclaw-pet` on Windows
   (Settings → Character → **Show files** opens it).
-- States: `idle` (required), `hover`, `pressed`, `drag`, `drop`, `thinking`, `working`, `happy`, `error`,
-  `question`, `offline`. Missing states fall back sensibly (e.g. `working → thinking → idle`), and CSS motion
-  (breathing, wiggle, bounce, shake, hop) plus a small badge make even a single-image character feel alive.
+- States: `idle` (required), `hover`, `pressed`, `drag`, `drop`, `thinking`, `working`, `happy`, `praise`,
+  `encourage`, `shy`, `sad`, `tired`, `error`, `question`, `offline`. Missing states fall back sensibly
+  (`working → thinking → idle`, `praise/encourage/shy → happy → idle`, `tired → sad → idle`), and one-shot CSS
+  motion (hop, cheer, wiggle, droop, sag, shake) plus a small badge make even a single-image character feel alive.
+- The bundled Momo has an image for every state. An already-installed Momo picks up images for newly added
+  states on the next launch without touching anything you changed.
 - Formats: PNG, WebP, GIF (animated is fine), JPG, SVG, APNG, AVIF.
 - **Import folder** accepts either a folder with `character.json` or a folder of images named after the states
   (`idle.png`, `happy.gif`, …).
@@ -199,9 +238,12 @@ keeps the bundle at ~230 KB with no runtime dependencies and makes the token pol
 session list) is already broadcast to operator clients, so a plugin would add an install step and a
 restart for no gain, which conflicts with the plug-and-play goal.
 
-**Why no session subscription.** By not advertising `session-scoped-events`, the pet receives `chat`
-and `agent` events for all readable sessions and can follow whatever session the user is actually
-using (Discord today, web chat tomorrow) without polling `sessions.list`.
+**Why one session subscription.** By not advertising `session-scoped-events`, the pet is eligible for the
+`chat` and `agent` broadcasts of all readable sessions and can follow whatever session the user is actually
+using (Discord today, web chat tomorrow) without polling `sessions.list`. In practice those broadcasts are
+not projected for every runtime (a real run on the Claude CLI runtime produced none), so the pet also calls
+`sessions.messages.subscribe` for the one session the quick chat targets and takes replies from the
+transcript events, the same source the bundled TUI uses. It re-subscribes when the target changes.
 
 **Prior art reviewed.** DesktopClaw (Electron, Gateway WS, PNG sprite sheets), kkclaw (Electron,
 CSS animation), OC-Claw (Tauri, polls session JSONL files rather than the Gateway), and Codex Pets
@@ -209,7 +251,7 @@ CSS animation), OC-Claw (Tauri, polls session JSONL files rather than the Gatewa
 idle/thinking/working/happy/error/question state set follow their conventions so assets are easy to port.
 
 **Privacy.** Nothing leaves the machine except the WebSocket to your own Gateway. No analytics, no
-sentiment API. Reply text is kept in memory only for the status line.
+sentiment API. Reply text is kept in memory only for the speech bubble and is gone when the app quits.
 
 ## Build from source
 
@@ -228,7 +270,11 @@ Useful commands:
 | `npm run build` | bundle main / preload / renderers into `dist/` |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm test` | unit tests (reaction heuristics, discovery, device auth) |
-| `npm run probe` | connect to the local Gateway like the app does, list sessions; add `-- --watch=10` to stream events. Costs no tokens. |
+| `npm run probe` | connect to the local Gateway like the app does, list sessions; add `-- --watch=10` to stream events or `-- --history=agent:main:main` to print the last transcript entries. Costs no tokens. |
+| `node scripts/dev-run.mjs 20 --capture /tmp/pet` | run for 20 s with debug logging and write `pet.png`, `settings*.png`; `--shots N` keeps capturing the pet every 3 s |
+| `… --send "/status"` | submit one quick-chat message through the real UI path; `/status` is answered by the Gateway itself, so it is a **token-free** end-to-end test of the bubble and the thinking state |
+| `… --send-dry "hi"` | same UI path with a locally faked reply (no network); `--collapse-at 3` clicks the bubble before shot 3 |
+| `… --eval "<js>"` | run JS in the pet page before the first capture (`--eval-end` after the last) |
 | `npm run dist:mac` | `.dmg` + `.zip` into `release/` (unsigned unless you provide signing env vars) |
 | `npm run dist:win` | NSIS installer + portable `.exe` into `release/` (run on Windows) |
 | `OPENCLAW_PET_DEBUG=1 npm start` | verbose connection logging |
@@ -268,7 +314,21 @@ Verified on this machine (macOS, OpenClaw 2026.9.3, live Gateway with a Discord-
   loopback auto-pairing, `hello-ok` with `operator.read`/`operator.write`, `sessions.subscribe` bootstrap.
 - App launch: pet window, tray, settings window, connection turns green, sessions loaded.
 - `npm run dist:mac -- --dir` packaging (unsigned).
-- Unit tests: 14 passing (`npm test`).
+- Unit tests: 27 passing (`npm test`): reaction heuristics for all eight reactions in Korean and English,
+  settings migration/clamping, discovery, device auth.
+- Round 2 (2026-09-13), with the app running against the live Gateway:
+  - Speech bubble: shows the sent message, the live "Thinking…" state, the streamed/final reply and errors;
+    click collapses it to a pill; corner grip resizes; the window grew from 316 to 381 px and back as the
+    bubble appeared / collapsed (`--send-dry` run, screenshots inspected).
+  - Ambient motion: enabling Idle at intensity 2 / speed 1.5 yields the `breathe` animation with a 2.4 s period
+    and the CSS variables set; the setting was restored afterwards.
+  - Thinking asset: with the token-free `/status` quick chat the character switched to the thinking image
+    right after Enter (`state-thinking` in the capture), the Gateway's reply reached the bubble via
+    `session.message`, and the character went back to idle.
+  - One real quick-chat message (the single message the maintainer allowed) was sent to the owner's main
+    session. `chat.history` confirms the reply "Pet test done ✅" arrived 7 s later, but the Gateway
+    broadcast **no** `chat`/`agent` event for that Claude-CLI-runtime run, which is exactly why the pet
+    previously never left idle. The `session.message` subscription above was added in response.
 - Idle footprint in dev mode (`node scripts/dev-run.mjs 12`): about 400 MB of *summed* resident memory across the
   Electron main, GPU and renderer processes. That figure double-counts shared framework pages, so the real
   unique memory is well under half of it, and CPU is at zero while idle (no timers, no polling). A Tauri
@@ -276,9 +336,11 @@ Verified on this machine (macOS, OpenClaw 2026.9.3, live Gateway with a Discord-
 
 Not verified here (see `BLOCKERS.md`):
 
-- Sending a quick-chat message end-to-end. It would start a real, token-consuming agent turn in the owner's
-  live session, so it was intentionally not exercised. The call is the documented `chat.send` RPC over the
-  same connection that `sessions.list` was verified on.
+- A real model reply flowing into the bubble and triggering a reaction (happy/praise/…) end-to-end. The
+  `session.message` path that now carries replies was verified with the Gateway-handled `/status` command,
+  not with a second real agent turn (only one was allowed). To confirm on your own session:
+  `node scripts/dev-run.mjs 60 --capture /tmp/pet --shots 12 --send "reply with just: done ✅"`.
+- The **working** state with a real tool call in flight (needs a quick chat that makes the agent use a tool).
 - Windows build and runtime (no Windows machine available).
-- Live `thinking`/`working`/reaction transitions with a real run in flight (the event handling is exercised
-  by unit tests on the classifier and by watching the live event stream with `npm run probe -- --watch`).
+- Bubble resizing with a real mouse drag (the grip logic runs on mouse events; only the collapse click was
+  driven programmatically in the captures).
