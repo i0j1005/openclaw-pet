@@ -29,15 +29,38 @@ export class CharacterLibrary {
     this.installBundled();
   }
 
-  /** Copies bundled characters into userData on first run so everything is editable and uniform. */
+  /**
+   * Copies bundled characters into userData on first run so everything is editable and uniform.
+   * On later runs a built-in character only gains images for states it has no entry for yet (new
+   * states added by an update); anything the user changed or cleared is left alone.
+   */
   private installBundled(): void {
     if (!existsSync(this.bundledDir)) return;
     for (const entry of readdirSync(this.bundledDir)) {
       const src = join(this.bundledDir, entry);
       const dst = join(this.root, entry);
-      if (!statSync(src).isDirectory() || existsSync(dst)) continue;
-      mkdirSync(dst, { recursive: true });
-      for (const file of readdirSync(src)) copyFileSync(join(src, file), join(dst, file));
+      if (!statSync(src).isDirectory()) continue;
+      if (!existsSync(dst)) {
+        mkdirSync(dst, { recursive: true });
+        for (const file of readdirSync(src)) copyFileSync(join(src, file), join(dst, file));
+        continue;
+      }
+      try {
+        const bundled = JSON.parse(readFileSync(join(src, "character.json"), "utf8")) as CharacterManifest;
+        const installed = this.manifest(entry);
+        if (!installed.builtIn) continue;
+        let changed = false;
+        for (const [state, file] of Object.entries(bundled.assets ?? {})) {
+          if (!PET_STATES.includes(state as PetState) || state in (installed.assets ?? {}) || typeof file !== "string") continue;
+          if (existsSync(join(dst, file)) || !existsSync(join(src, file))) continue;
+          copyFileSync(join(src, file), join(dst, file));
+          installed.assets[state as PetState] = file;
+          changed = true;
+        }
+        if (changed) this.writeManifest(installed);
+      } catch {
+        // A broken manifest is reported by list(); nothing to upgrade.
+      }
     }
   }
 

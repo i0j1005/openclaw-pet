@@ -65,6 +65,14 @@ const targets = [
     format: "esm",
     target: "node22",
   },
+  {
+    // Separate target: a different source folder would otherwise change the shared outbase.
+    entryPoints: [join(root, "src/main/settings-store.ts")],
+    outfile: join(out, "tests/settings-store.js"),
+    platform: "node",
+    format: "esm",
+    target: "node22",
+  },
 ];
 
 function copyStatic() {

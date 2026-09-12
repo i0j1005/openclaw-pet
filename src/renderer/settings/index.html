@@ -77,7 +77,7 @@
       <section>
         <h2>Behavior</h2>
         <div class="row">
-          <div class="row-text"><strong>Reactions</strong><span class="muted">Change the look when OpenClaw thinks, works, succeeds, fails or asks something.</span></div>
+          <div class="row-text"><strong>Reactions</strong><span class="muted">Change the look after a reply: happy, praise, encourage, shy, sad, tired, error or question. Decided locally from the reply text, never with an extra prompt.</span></div>
           <label class="switch"><input type="checkbox" id="reactionsEnabled" /><span></span></label>
         </div>
         <div class="row">
@@ -85,13 +85,15 @@
           <label class="switch"><input type="checkbox" id="hoverChatEnabled" /><span></span></label>
         </div>
         <div class="row">
-          <div class="row-text"><strong>Ambient motion</strong><span class="muted">Gentle breathing while idle and swaying while thinking. Uses a little GPU time continuously.</span></div>
-          <label class="switch"><input type="checkbox" id="ambientMotionEnabled" /><span></span></label>
+          <div class="row-text"><strong>Speech bubble</strong><span class="muted">After you press Enter the input turns into a bubble with your message and the reply. Click it to collapse, drag its corner to resize.</span></div>
+          <div class="controls">
+            <button id="bubbleReset" class="small">Reset size</button>
+          </div>
         </div>
-        <div class="row">
-          <div class="row-text"><strong>Reaction length</strong><span class="muted" id="reactionLabel">7 s</span></div>
-          <input id="reactionDuration" type="range" min="2" max="30" step="1" />
-        </div>
+        <h3>Ambient motion <span class="muted">— looping motion per state. Off by default: it keeps the GPU a little busy.</span></h3>
+        <div id="ambientRows" class="grid-rows"></div>
+        <h3>Reaction length <span class="muted">— how long each reaction stays before the character goes back to idle.</span></h3>
+        <div id="holdRows" class="grid-rows"></div>
       </section>
 
       <section>

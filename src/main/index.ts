@@ -3,17 +3,20 @@ import { app, BrowserWindow, dialog, ipcMain, screen, shell } from "electron";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { IPC, type PetState, type Settings } from "../shared/types";
-import { SettingsStore } from "./settings-store";
+import { SettingsStore, type SettingsPatch } from "./settings-store";
 import { CharacterLibrary } from "./characters";
 import { OpenClawController } from "./openclaw/controller";
 import { loadOrCreateDeviceIdentity } from "./openclaw/device-identity";
 import { PetTray } from "./tray";
 import {
+  anchorFromWindow,
   applyAlwaysOnTop,
   clampToScreen,
   createPetWindow,
   createSettingsWindow,
+  layoutPetWindow,
   petWindowBounds,
+  type PetExtent,
 } from "./windows";
 
 const log = (msg: string) => {
@@ -38,6 +41,10 @@ let characters: CharacterLibrary;
 let controller: OpenClawController;
 let dragTimer: NodeJS.Timeout | null = null;
 let quitting = false;
+/** Top-left of the base pet window (where the character is); the speech bubble may grow the window around it. */
+let petAnchor: { x: number; y: number } = { x: 0, y: 0 };
+let petExtent: PetExtent = { width: 0, height: 0 };
+let lastProgrammaticPos: { x: number; y: number } | null = null;
 
 const appPath = app.getAppPath();
 const assetsDir = join(appPath, "assets");
@@ -116,14 +123,30 @@ function createPet(): void {
     alwaysOnTop: s.alwaysOnTop,
     position: s.position,
   });
+  const [ax, ay] = petWindow.getPosition();
+  petAnchor = { x: ax, y: ay };
   petWindow.on("closed", () => {
     petWindow = null;
   });
   petWindow.on("moved", () => {
     if (!petWindow || dragTimer) return;
     const [x, y] = petWindow.getPosition();
-    settingsStore.update({ position: { x, y } });
+    // Moves we made ourselves (bubble growth / shrink) must not change the user's anchor.
+    if (lastProgrammaticPos && lastProgrammaticPos.x === x && lastProgrammaticPos.y === y) return;
+    petAnchor = anchorFromWindow({ x, y }, settingsStore.get().size, petExtent);
+    settingsStore.update({ position: petAnchor });
   });
+}
+
+/** Re-applies the pet window bounds from the anchor, the character size and the renderer's extent. */
+function layoutPet(): void {
+  if (!petWindow || petWindow.isDestroyed()) return;
+  const bounds = layoutPetWindow(petAnchor, settingsStore.get().size, petExtent);
+  const [cx, cy] = petWindow.getPosition();
+  const [cw, ch] = petWindow.getSize();
+  if (cx === bounds.x && cy === bounds.y && cw === bounds.width && ch === bounds.height) return;
+  lastProgrammaticPos = { x: bounds.x, y: bounds.y };
+  petWindow.setBounds(bounds);
 }
 
 function openSettings(): void {
@@ -153,7 +176,7 @@ function applyControllerSettings(s: Settings): void {
     enabled: s.openclawEnabled,
     gateway: s.gateway,
     reactionsEnabled: s.reactionsEnabled,
-    reactionDurationMs: s.reactionDurationMs,
+    reactionHoldMs: s.reactionHoldMs,
   });
 }
 
@@ -171,38 +194,82 @@ function applyLoginItem(enabled: boolean): void {
   }
 }
 
-/** Debug aid: OPENCLAW_PET_CAPTURE=/dir writes PNGs of both windows a few seconds after launch. */
+/**
+ * Debug aid (dev runs only, see scripts/dev-run.mjs):
+ *   OPENCLAW_PET_CAPTURE=/dir            writes PNGs of both windows 5 s after launch
+ *   OPENCLAW_PET_CAPTURE_SHOTS=N         then keeps capturing the pet every 3 s, N times (pet-1.png, pet-2.png…)
+ *   OPENCLAW_PET_TEST_MESSAGE="text"     submits one quick-chat message through the renderer 4 s after launch.
+ *                                        This starts ONE real agent turn; it is opt-in and never set in normal use.
+ */
 function scheduleDebugCapture(): void {
   const dir = process.env.OPENCLAW_PET_CAPTURE;
+  const testMessage = process.env.OPENCLAW_PET_TEST_MESSAGE;
+  if (!dir && !testMessage) return;
+  if (testMessage) {
+    setTimeout(() => {
+      log(`debug: submitting test quick-chat message through the pet window`);
+      petWindow?.webContents.send(IPC.debugSubmit, testMessage);
+    }, 4000);
+  }
   if (!dir) return;
   openSettings();
+  const { writeFileSync, mkdirSync } = require("node:fs") as typeof import("node:fs");
+  mkdirSync(dir, { recursive: true });
+  const describe = (win: BrowserWindow) =>
+    win.webContents
+      .executeJavaScript(
+        "(() => { const s = document.getElementById('stage'); const b = document.getElementById('bubble'); return (s?.className ?? document.title) + (b && !b.hidden ? ' | bubble: ' + (b.textContent ?? '').replace(/\\s+/g, ' ').trim().slice(0, 160) : ''); })()",
+      )
+      .catch(() => "?");
+  const snap = async (name: string, win: BrowserWindow | null) => {
+    if (!win || win.isDestroyed()) return;
+    const image = await win.webContents.capturePage();
+    writeFileSync(join(dir, `${name}.png`), image.toPNG());
+    const [w, h] = win.getSize();
+    log(`captured ${name} → ${join(dir, `${name}.png`)} ${w}x${h} [${await describe(win)}]`);
+  };
+  const scrollSettingsTo = async (selector: string) => {
+    if (!settingsWindow || settingsWindow.isDestroyed()) return;
+    await settingsWindow.webContents.executeJavaScript(`document.querySelector(${JSON.stringify(selector)})?.scrollIntoView({ block: "start" })`).catch(() => undefined);
+    await new Promise((r) => setTimeout(r, 300));
+  };
   setTimeout(async () => {
-    const { writeFileSync, mkdirSync } = await import("node:fs");
-    mkdirSync(dir, { recursive: true });
-    for (const [name, win] of [
-      ["pet", petWindow],
-      ["settings", settingsWindow],
-    ] as const) {
-      if (!win || win.isDestroyed()) continue;
-      const image = await win.webContents.capturePage();
-      writeFileSync(join(dir, `${name}.png`), image.toPNG());
-      const state = await win.webContents.executeJavaScript("document.getElementById('stage')?.className ?? document.title").catch(() => "?");
-      log(`captured ${name} → ${join(dir, `${name}.png`)} [${state}]`);
+    await snap("pet", petWindow);
+    await snap("settings", settingsWindow);
+    await scrollSettingsTo("#assets");
+    await snap("settings-assets", settingsWindow);
+    await scrollSettingsTo("#ambientRows");
+    await snap("settings-behavior", settingsWindow);
+    const shots = Number(process.env.OPENCLAW_PET_CAPTURE_SHOTS ?? "0");
+    const collapseAt = Number(process.env.OPENCLAW_PET_CAPTURE_COLLAPSE_AT ?? "0");
+    for (let i = 1; i <= shots; i += 1) {
+      await new Promise((r) => setTimeout(r, 3000));
+      if (i === collapseAt && petWindow && !petWindow.isDestroyed()) {
+        // Simulate a click on the bubble (mousedown + click, no movement) to toggle the pill.
+        await petWindow.webContents
+          .executeJavaScript(
+            "(() => { const b = document.getElementById('bubble'); if (!b || b.hidden) return 'no bubble'; for (const t of ['mousedown','click']) b.dispatchEvent(new MouseEvent(t, { bubbles: true, clientX: 10, clientY: 10, button: 0 })); return b.className; })()",
+          )
+          .then((r) => log(`debug: toggled bubble → ${r}`))
+          .catch((e) => log(`debug: toggle failed ${e}`));
+        await new Promise((r) => setTimeout(r, 400));
+      }
+      await snap(`pet-${i}`, petWindow);
     }
   }, 5000);
 }
 
-function applySettings(patch: Partial<Settings>): Settings {
+function applySettings(patch: SettingsPatch): Settings {
   const before = settingsStore.get();
   const next = settingsStore.update(patch);
-  if (petWindow && (next.size !== before.size)) {
-    const { width, height } = petWindowBounds(next.size);
-    const [x, y] = petWindow.getPosition();
-    const [w] = petWindow.getSize();
+  if (petWindow && next.size !== before.size) {
     // Keep the character horizontally centred where it was.
-    const nx = x + Math.round((w - width) / 2);
-    const pos = clampToScreen({ x: nx, y }, width, height) ?? { x: nx, y };
-    petWindow.setBounds({ x: pos.x, y: pos.y, width, height });
+    const oldW = petWindowBounds(before.size).width;
+    const { width, height } = petWindowBounds(next.size);
+    const nx = petAnchor.x + Math.round((oldW - width) / 2);
+    petAnchor = clampToScreen({ x: nx, y: petAnchor.y }, width, height) ?? { x: nx, y: petAnchor.y };
+    settingsStore.update({ position: petAnchor });
+    layoutPet();
   }
   if (petWindow && next.alwaysOnTop !== before.alwaysOnTop) applyAlwaysOnTop(petWindow, next.alwaysOnTop);
   if (next.launchAtLogin !== before.launchAtLogin) applyLoginItem(next.launchAtLogin);
@@ -214,7 +281,7 @@ function applySettings(patch: Partial<Settings>): Settings {
 
 function registerIpc(): void {
   ipcMain.handle(IPC.getSettings, () => settingsStore.get());
-  ipcMain.handle(IPC.updateSettings, (_e, patch: Partial<Settings>) => applySettings(patch));
+  ipcMain.handle(IPC.updateSettings, (_e, patch: SettingsPatch) => applySettings(patch));
 
   ipcMain.handle(IPC.getCharacters, () => characters.list());
   ipcMain.handle(IPC.addCharacter, (_e, name: string, imagePath: string) => {
@@ -279,7 +346,10 @@ function registerIpc(): void {
 
   ipcMain.handle(IPC.getConnection, () => controller.getConnection());
   ipcMain.handle(IPC.getSnapshot, () => controller.getSnapshot());
-  ipcMain.handle(IPC.sendQuickChat, (_e, text: string) => controller.sendQuickChat(text));
+  ipcMain.handle(IPC.sendQuickChat, (_e, text: string) => {
+    if (process.env.OPENCLAW_PET_TEST_DRY) return fakeQuickChat(text);
+    return controller.sendQuickChat(text);
+  });
 
   ipcMain.handle(IPC.dragStart, (_e, offsetX: number, offsetY: number) => {
     if (!petWindow) return;
@@ -304,12 +374,23 @@ function registerIpc(): void {
     const [x, y] = petWindow.getPosition();
     const [w, h] = petWindow.getSize();
     const clamped = clampToScreen({ x, y }, w, h) ?? { x, y };
-    if (clamped.x !== x || clamped.y !== y) petWindow.setPosition(clamped.x, clamped.y);
-    settingsStore.update({ position: clamped });
+    if (clamped.x !== x || clamped.y !== y) {
+      lastProgrammaticPos = clamped;
+      petWindow.setPosition(clamped.x, clamped.y);
+    }
+    // Wherever the user dropped it is the new anchor, even if the window is currently grown by the bubble.
+    petAnchor = anchorFromWindow(clamped, settingsStore.get().size, petExtent);
+    settingsStore.update({ position: petAnchor });
     petWindow.webContents.send(IPC.windowDropped, { dx: clamped.x - (start?.[0] ?? x), dy: clamped.y - (start?.[1] ?? y) });
   });
   ipcMain.on(IPC.setIgnoreMouse, (_e, ignore: boolean) => {
     petWindow?.setIgnoreMouseEvents(ignore, { forward: true });
+  });
+  ipcMain.handle(IPC.setExtent, (_e, width: number, height: number) => {
+    const next = { width: Math.max(0, Number(width) || 0), height: Math.max(0, Number(height) || 0) };
+    if (next.width === petExtent.width && next.height === petExtent.height) return;
+    petExtent = next;
+    layoutPet();
   });
 
   ipcMain.handle(IPC.openSettings, () => openSettings());
@@ -320,6 +401,30 @@ function registerIpc(): void {
   ipcMain.handle(IPC.openExternal, (_e, url: string) => {
     if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
   });
+}
+
+/**
+ * Dev-only stand-in for chat.send (OPENCLAW_PET_TEST_DRY=1): plays the same chat status sequence the
+ * gateway would produce, without any network or tokens, so the bubble/window logic can be exercised.
+ */
+function fakeQuickChat(text: string): { ok: boolean; runId: string } {
+  const runId = `dry-${Date.now()}`;
+  const send = (update: unknown) => petWindow?.webContents.send(IPC.chatStatus, update);
+  log(`dry run: pretending to send "${text}"`);
+  setTimeout(() => send({ runId, phase: "sent" }), 100);
+  setTimeout(() => send({ runId, phase: "working" }), 1500);
+  setTimeout(() => send({ runId, phase: "thinking", text: "Sure! Here is a longer sample reply so the bubble has something to" }), 3000);
+  setTimeout(
+    () =>
+      send({
+        runId,
+        phase: "reply",
+        text:
+          "Sure! Here is a longer sample reply so the bubble has something to show: the three points are tabs, spaces, and the fact that people will argue about them forever. Anyway, all done ✅",
+      }),
+    4500,
+  );
+  return { ok: true, runId };
 }
 
 function stopDrag(): void {

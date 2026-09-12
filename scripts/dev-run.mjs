@@ -1,5 +1,9 @@
 // Runs the app for N seconds with debug logging (used for smoke tests):
-//   node scripts/dev-run.mjs 20 [--screenshot /tmp/pet.png]
+//   node scripts/dev-run.mjs 20 [--screenshot /tmp/pet.png] [--capture /tmp/dir] [--shots 6] [--send "message"]
+//                                 [--send-dry "message"] [--collapse-at 3]
+// --capture writes pet.png + settings.png after 5 s; --shots N keeps capturing pet-1.png … pet-N.png every 3 s.
+// --send submits ONE real quick-chat message through the pet window (this starts an agent turn in the
+// owner's most recent OpenClaw session and costs tokens: use it deliberately, never in a loop).
 import { spawn, execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,10 +17,28 @@ const shotIdx = process.argv.indexOf("--screenshot");
 const shot = shotIdx > 0 ? process.argv[shotIdx + 1] : null;
 const capIdx = process.argv.indexOf("--capture");
 const capture = capIdx > 0 ? process.argv[capIdx + 1] : null;
+const shotsIdx = process.argv.indexOf("--shots");
+const shots = shotsIdx > 0 ? process.argv[shotsIdx + 1] : null;
+const sendIdx = process.argv.indexOf("--send");
+const send = sendIdx > 0 ? process.argv[sendIdx + 1] : null;
+// --send-dry "msg": same as --send but chat.send is replaced by a local fake reply (no tokens, no network).
+const dryIdx = process.argv.indexOf("--send-dry");
+const sendDry = dryIdx > 0 ? process.argv[dryIdx + 1] : null;
+// --collapse-at N: click the bubble right before pet-N.png so the collapsed pill gets captured.
+const collapseIdx = process.argv.indexOf("--collapse-at");
+const collapseAt = collapseIdx > 0 ? process.argv[collapseIdx + 1] : null;
 
 const child = spawn(electron, [root], {
   cwd: root,
-  env: { ...process.env, OPENCLAW_PET_DEBUG: "1", ...(capture ? { OPENCLAW_PET_CAPTURE: capture } : {}) },
+  env: {
+    ...process.env,
+    OPENCLAW_PET_DEBUG: "1",
+    ...(capture ? { OPENCLAW_PET_CAPTURE: capture } : {}),
+    ...(shots ? { OPENCLAW_PET_CAPTURE_SHOTS: shots } : {}),
+    ...(send ? { OPENCLAW_PET_TEST_MESSAGE: send } : {}),
+    ...(sendDry ? { OPENCLAW_PET_TEST_MESSAGE: sendDry, OPENCLAW_PET_TEST_DRY: "1" } : {}),
+    ...(collapseAt ? { OPENCLAW_PET_CAPTURE_COLLAPSE_AT: collapseAt } : {}),
+  },
   stdio: ["ignore", "pipe", "pipe"],
 });
 child.stdout.on("data", (d) => process.stdout.write(d));

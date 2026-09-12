@@ -1,7 +1,10 @@
-// Pet window renderer: character display, mouse interaction, quick chat.
+// Pet window renderer: character display, mouse interaction, quick chat and the speech bubble.
 // Everything visual is decided here or in the main process; nothing here talks to a model.
 import {
+  AMBIENT_STATES,
+  BUBBLE_LIMITS,
   STATE_FALLBACKS,
+  type AmbientState,
   type Character,
   type ChatStatusUpdate,
   type ConnectionInfo,
@@ -19,7 +22,14 @@ const badge = $<HTMLDivElement>("badge");
 const chat = $<HTMLDivElement>("chat");
 const chatForm = $<HTMLFormElement>("chatForm");
 const chatInput = $<HTMLInputElement>("chatInput");
-const chatStatus = $<HTMLDivElement>("chatStatus");
+const bubble = $<HTMLDivElement>("bubble");
+const bubbleUser = $<HTMLDivElement>("bubbleUser");
+const bubbleReply = $<HTMLDivElement>("bubbleReply");
+const bubblePill = $<HTMLDivElement>("bubblePill");
+const bubbleGrip = $<HTMLDivElement>("bubbleGrip");
+
+/** Must match PET_PAD in src/main/windows.ts (the stage padding). */
+const PAD = 12;
 
 let settings: Settings | null = null;
 let character: Character | null = null;
@@ -35,13 +45,28 @@ let pressStart: { x: number; y: number } | null = null;
 let ignoringMouse = false;
 let chatHideTimer: number | null = null;
 let chatOverride = false; // opened by click; stays until Esc / blur
-let statusTimer: number | null = null;
 let currentSrc = "";
+
+// speech bubble state (last exchange; stays until the next message is sent)
+type BubblePhase = "sending" | "thinking" | "working" | "reply" | "error" | "aborted";
+let bubbleState: { visible: boolean; user: string; reply: string; phase: BubblePhase; runId?: string } = {
+  visible: false,
+  user: "",
+  reply: "",
+  phase: "reply",
+};
+let resizing: { startX: number; startY: number; w: number; h: number } | null = null;
+let bubblePress: { x: number; y: number } | null = null;
 
 const BADGES: Partial<Record<PetState, string>> = {
   thinking: "…",
   working: "⚙",
   happy: "♥",
+  praise: "★",
+  encourage: "♪",
+  shy: "~",
+  sad: "☹",
+  tired: "z",
   error: "!",
   question: "?",
   offline: "z",
@@ -49,15 +74,20 @@ const BADGES: Partial<Record<PetState, string>> = {
 
 // ---- state resolution ---------------------------------------------------------
 
+/**
+ * Precedence: drag > pressed > drop > working > thinking > reaction > hover > offline > idle.
+ * Activity and reactions beat hover on purpose: the mouse is usually still over the character right
+ * after sending from the quick chat, and the whole point is to see it think and react.
+ */
 function displayState(): PetState {
   const now = Date.now();
   if (dragging) return "drag";
   if (pressed) return "pressed";
   if (dropUntil > now) return "drop";
-  if (hovering) return "hover";
-  if (snapshot.reaction) return snapshot.reaction;
   if (snapshot.activity === "working") return "working";
   if (snapshot.activity === "thinking") return "thinking";
+  if (snapshot.reaction) return snapshot.reaction;
+  if (hovering) return "hover";
   if (settings?.openclawEnabled && snapshot.connection !== "connected") return "offline";
   return "idle";
 }
@@ -90,18 +120,24 @@ function render(): void {
     img.removeAttribute("src");
     img.style.visibility = "hidden";
   }
+  const ambient = settings && (AMBIENT_STATES as readonly string[]).includes(state) ? settings.ambientMotion[state as AmbientState] : null;
+  if (ambient?.enabled) {
+    stage.style.setProperty("--amb-i", String(ambient.intensity));
+    stage.style.setProperty("--amb-speed", String(ambient.speed));
+  }
   stage.className = [
     `state-${state}`,
     fallback ? "fallback" : "",
     `conn-${snapshot.connection}`,
     settings?.openclawEnabled ? "show-dot" : "",
-    settings?.ambientMotionEnabled ? "ambient" : "",
+    ambient?.enabled ? "ambient" : "",
     fallback && BADGES[state] ? "badge" : "",
     chatOpen() ? "chat-open" : "",
   ]
     .filter(Boolean)
     .join(" ");
   badge.textContent = BADGES[state] ?? "";
+  requestExtent();
 }
 
 function applySettings(s: Settings): void {
@@ -109,8 +145,38 @@ function applySettings(s: Settings): void {
   charEl.style.setProperty("--size", `${s.size}px`);
   chatInput.disabled = !s.openclawEnabled;
   chatInput.placeholder = s.openclawEnabled ? "Ask OpenClaw…" : "OpenClaw is off";
+  if (!resizing) {
+    bubble.style.setProperty("--bubble-w", `${s.bubble.width}px`);
+    bubble.style.setProperty("--bubble-h", `${s.bubble.maxHeight}px`);
+  }
+  bubble.classList.toggle("collapsed", s.bubble.collapsed);
   render();
 }
+
+// ---- window extent (the main process grows the transparent window to fit the bubble) ------------
+
+let extentRaf = 0;
+let lastExtent = { w: -1, h: -1 };
+function requestExtent(): void {
+  if (extentRaf) return;
+  extentRaf = window.requestAnimationFrame(() => {
+    extentRaf = 0;
+    let bottom = charEl.getBoundingClientRect().bottom;
+    let width = 0;
+    if (stage.classList.contains("chat-open")) bottom = Math.max(bottom, chat.getBoundingClientRect().bottom);
+    if (!bubble.hidden) {
+      const r = bubble.getBoundingClientRect();
+      bottom = Math.max(bottom, r.bottom);
+      width = r.width + PAD * 2;
+    }
+    const w = Math.ceil(width);
+    const h = Math.ceil(bottom + PAD);
+    if (w === lastExtent.w && h === lastExtent.h) return;
+    lastExtent = { w, h };
+    void api.pet.setExtent(w, h);
+  });
+}
+new ResizeObserver(() => requestExtent()).observe(bubble);
 
 // ---- chat bar -------------------------------------------------------------------
 
@@ -118,7 +184,7 @@ function chatOpen(): boolean {
   if (!settings) return false;
   if (chatOverride) return true;
   if (!settings.hoverChatEnabled) return false;
-  return hovering || document.activeElement === chatInput || chatInput.value.trim().length > 0 || chatStatus.classList.contains("show");
+  return hovering || document.activeElement === chatInput || chatInput.value.trim().length > 0;
 }
 
 function scheduleChatHide(): void {
@@ -129,38 +195,35 @@ function scheduleChatHide(): void {
   }, 700);
 }
 
-function showStatus(text: string, opts: { error?: boolean; sticky?: boolean } = {}): void {
-  chatStatus.textContent = text;
-  chatStatus.classList.toggle("err", Boolean(opts.error));
-  chatStatus.classList.add("show");
-  if (statusTimer) window.clearTimeout(statusTimer);
-  statusTimer = null;
-  if (!opts.sticky) {
-    statusTimer = window.setTimeout(() => {
-      chatStatus.classList.remove("show");
-      statusTimer = null;
-      render();
-    }, 9000);
-  }
+async function submitQuickChat(text: string): Promise<void> {
+  chatInput.value = "";
+  chatOverride = false;
+  chatInput.blur();
+  bubbleState = { visible: true, user: text, reply: "", phase: "sending" };
+  renderBubble();
   render();
+  const res = await api.openclaw.sendQuickChat(text);
+  if (!res.ok) {
+    bubbleState = { ...bubbleState, reply: res.error ?? "Could not send.", phase: "error" };
+  } else if (bubbleState.phase === "sending") {
+    bubbleState = { ...bubbleState, runId: res.runId, phase: "thinking" };
+  } else {
+    bubbleState.runId = res.runId;
+  }
+  renderBubble();
 }
 
-chatForm.addEventListener("submit", async (e) => {
+chatForm.addEventListener("submit", (e) => {
   e.preventDefault();
   const text = chatInput.value.trim();
   if (!text) return;
-  chatInput.value = "";
-  showStatus("Sending…", { sticky: true });
-  const res = await api.openclaw.sendQuickChat(text);
-  if (!res.ok) showStatus(res.error ?? "Could not send.", { error: true });
-  else showStatus("Sent. Thinking…", { sticky: true });
+  void submitQuickChat(text);
 });
 chatInput.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     chatInput.value = "";
     chatOverride = false;
     chatInput.blur();
-    chatStatus.classList.remove("show");
     render();
   }
 });
@@ -168,27 +231,106 @@ chatInput.addEventListener("blur", () => scheduleChatHide());
 chatInput.addEventListener("focus", () => render());
 
 api.openclaw.onChatStatus((u: ChatStatusUpdate) => {
+  if (!bubbleState.visible) return;
+  if (bubbleState.runId && u.runId !== bubbleState.runId) return;
   switch (u.phase) {
     case "sent":
-      showStatus("Sent. Thinking…", { sticky: true });
+      if (bubbleState.phase === "sending") bubbleState.phase = "thinking";
       break;
     case "thinking":
-      showStatus("Thinking…", { sticky: true });
+      bubbleState.phase = "thinking";
+      if (u.text) bubbleState.reply = u.text; // streamed partial reply
       break;
     case "working":
-      showStatus("Working on it…", { sticky: true });
+      bubbleState.phase = "working";
       break;
     case "reply":
-      showStatus(u.text ? u.text : "Done.");
+      bubbleState.phase = "reply";
+      bubbleState.reply = u.text || "Done.";
       break;
     case "error":
-      showStatus(u.text ?? "OpenClaw ran into an error.", { error: true });
+      bubbleState.phase = "error";
+      bubbleState.reply = u.text ?? "OpenClaw ran into an error.";
       break;
     case "aborted":
-      showStatus("Stopped.");
+      bubbleState.phase = "aborted";
+      bubbleState.reply = bubbleState.reply || "Stopped.";
       break;
   }
+  renderBubble();
 });
+
+// ---- speech bubble ---------------------------------------------------------------
+
+function renderBubble(): void {
+  bubble.hidden = !bubbleState.visible;
+  if (!bubbleState.visible) {
+    requestExtent();
+    return;
+  }
+  const pending = bubbleState.phase === "sending" || bubbleState.phase === "thinking" || bubbleState.phase === "working";
+  bubble.classList.toggle("err", bubbleState.phase === "error");
+  bubble.classList.toggle("pending", pending && !bubbleState.reply);
+  bubbleUser.textContent = bubbleState.user;
+  const placeholder =
+    bubbleState.phase === "sending" ? "Sending" : bubbleState.phase === "working" ? "Working on it" : bubbleState.phase === "thinking" ? "Thinking" : "";
+  bubbleReply.textContent = bubbleState.reply || placeholder;
+  const pillText = bubbleState.reply ? bubbleState.reply : placeholder ? `${placeholder}…` : "";
+  bubblePill.textContent = pillText.replace(/\s+/g, " ").trim().slice(0, 80);
+  requestExtent();
+}
+
+function toggleBubbleCollapsed(): void {
+  if (!settings) return;
+  const collapsed = !settings.bubble.collapsed;
+  bubble.classList.toggle("collapsed", collapsed);
+  settings.bubble.collapsed = collapsed;
+  requestExtent();
+  void api.settings.update({ bubble: { collapsed } });
+}
+
+bubble.addEventListener("mousedown", (e) => {
+  if (e.button !== 0 || e.target === bubbleGrip) return;
+  bubblePress = { x: e.clientX, y: e.clientY };
+});
+bubble.addEventListener("click", (e) => {
+  if (e.target === bubbleGrip || !bubblePress) return;
+  const moved = Math.hypot(e.clientX - bubblePress.x, e.clientY - bubblePress.y) > 4;
+  bubblePress = null;
+  // A drag inside the bubble is a text selection, not a toggle.
+  if (moved || (window.getSelection()?.toString().length ?? 0) > 0) return;
+  toggleBubbleCollapsed();
+});
+
+bubbleGrip.addEventListener("mousedown", (e) => {
+  if (e.button !== 0 || !settings) return;
+  e.preventDefault();
+  e.stopPropagation();
+  resizing = { startX: e.clientX, startY: e.clientY, w: settings.bubble.width, h: settings.bubble.maxHeight };
+  bubble.classList.add("resizing");
+});
+document.addEventListener("mousemove", (e) => {
+  if (!resizing) return;
+  const w = clamp(resizing.w + (e.clientX - resizing.startX) * 2, BUBBLE_LIMITS.width.min, BUBBLE_LIMITS.width.max);
+  const h = clamp(resizing.h + (e.clientY - resizing.startY), BUBBLE_LIMITS.maxHeight.min, BUBBLE_LIMITS.maxHeight.max);
+  bubble.style.setProperty("--bubble-w", `${Math.round(w)}px`);
+  bubble.style.setProperty("--bubble-h", `${Math.round(h)}px`);
+});
+function endResize(): void {
+  if (!resizing || !settings) return;
+  resizing = null;
+  bubble.classList.remove("resizing");
+  const width = parseInt(bubble.style.getPropertyValue("--bubble-w"), 10) || settings.bubble.width;
+  const maxHeight = parseInt(bubble.style.getPropertyValue("--bubble-h"), 10) || settings.bubble.maxHeight;
+  settings.bubble.width = width;
+  settings.bubble.maxHeight = maxHeight;
+  void api.settings.update({ bubble: { width, maxHeight } });
+}
+document.addEventListener("mouseup", () => endResize());
+
+function clamp(n: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, n));
+}
 
 // ---- mouse interaction ------------------------------------------------------------
 
@@ -199,13 +341,13 @@ function setIgnore(ignore: boolean): void {
 }
 
 document.addEventListener("mousemove", (e) => {
-  if (pressed || dragging) return;
+  if (pressed || dragging || resizing) return;
   const overHit = Boolean((e.target as HTMLElement | null)?.closest?.(".hit"));
   // Transparent regions of the window must not swallow clicks meant for windows behind the pet.
-  setIgnore(!overHit || (!chatOpen() && Boolean((e.target as HTMLElement | null)?.closest?.("#chat"))));
+  setIgnore(!overHit);
 });
 document.addEventListener("mouseleave", () => {
-  if (!pressed && !dragging) setIgnore(true);
+  if (!pressed && !dragging && !resizing) setIgnore(true);
 });
 
 charEl.addEventListener("mouseenter", () => {
@@ -265,6 +407,7 @@ async function endPress(): Promise<void> {
 document.addEventListener("mouseup", () => void endPress());
 window.addEventListener("blur", () => {
   if (pressed) void endPress();
+  endResize();
 });
 
 api.pet.onDropped(() => {
@@ -279,6 +422,11 @@ charEl.addEventListener("contextmenu", (e) => {
 });
 charEl.addEventListener("dblclick", (e) => {
   e.preventDefault();
+});
+
+// Dev-only hook used by scripts/dev-run.mjs --send to exercise the real quick-chat path once.
+api.pet.onDebugSubmit((text) => {
+  if (typeof text === "string" && text.trim()) void submitQuickChat(text.trim());
 });
 
 // ---- bootstrap -----------------------------------------------------------------

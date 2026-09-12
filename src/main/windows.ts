@@ -7,11 +7,43 @@ export const PET_PAD = 12;
 export const CHAT_AREA_HEIGHT = 92;
 export const MIN_PET_WINDOW_WIDTH = 280;
 
-export function petWindowBounds(size: number): { width: number; height: number } {
+/** Content size the renderer needs beyond the base layout (speech bubble open, wide bubble…). */
+export interface PetExtent {
+  width: number;
+  height: number;
+}
+
+export function petWindowBounds(size: number, extent?: PetExtent): { width: number; height: number } {
   return {
-    width: Math.max(MIN_PET_WINDOW_WIDTH, size + PET_PAD * 2),
-    height: size + PET_PAD * 2 + CHAT_AREA_HEIGHT,
+    width: Math.max(MIN_PET_WINDOW_WIDTH, size + PET_PAD * 2, Math.ceil(extent?.width ?? 0)),
+    height: Math.max(size + PET_PAD * 2 + CHAT_AREA_HEIGHT, Math.ceil(extent?.height ?? 0)),
   };
+}
+
+/**
+ * Bounds for the pet window given the user's anchor (top-left of the *base* window, i.e. where the
+ * character sits) and the current extent. The window widens symmetrically around the character and
+ * grows downwards; when the grown window would leave the work area it is shifted just enough to fit,
+ * and it goes back to the anchor as soon as the extent shrinks again.
+ */
+export function layoutPetWindow(anchor: { x: number; y: number }, size: number, extent: PetExtent): { x: number; y: number; width: number; height: number } {
+  const base = petWindowBounds(size);
+  const full = petWindowBounds(size, extent);
+  let x = anchor.x - Math.round((full.width - base.width) / 2);
+  let y = anchor.y;
+  if (full.width !== base.width || full.height !== base.height) {
+    const area = screen.getDisplayNearestPoint({ x: anchor.x + base.width / 2, y: anchor.y + base.height / 2 }).workArea;
+    x = Math.max(area.x, Math.min(x, area.x + area.width - full.width));
+    y = Math.max(area.y, Math.min(y, area.y + area.height - full.height));
+  }
+  return { x, y, width: full.width, height: full.height };
+}
+
+/** Inverse of layoutPetWindow: where the base window's top-left is for a window at `pos`. */
+export function anchorFromWindow(pos: { x: number; y: number }, size: number, extent: PetExtent): { x: number; y: number } {
+  const base = petWindowBounds(size);
+  const full = petWindowBounds(size, extent);
+  return { x: pos.x + Math.round((full.width - base.width) / 2), y: pos.y };
 }
 
 export function createPetWindow(params: {

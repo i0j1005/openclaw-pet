@@ -10,6 +10,7 @@ import type {
   QuickChatResult,
   Settings,
 } from "../shared/types";
+import type { SettingsPatch } from "../main/settings-store";
 
 type Listener<T> = (payload: T) => void;
 
@@ -22,7 +23,7 @@ function on<T>(channel: string, listener: Listener<T>): () => void {
 const api = {
   settings: {
     get: (): Promise<Settings> => ipcRenderer.invoke(IPC.getSettings),
-    update: (patch: Partial<Settings>): Promise<Settings> => ipcRenderer.invoke(IPC.updateSettings, patch),
+    update: (patch: SettingsPatch): Promise<Settings> => ipcRenderer.invoke(IPC.updateSettings, patch),
     onChange: (l: Listener<Settings>) => on(IPC.settingsChanged, l),
   },
   characters: {
@@ -67,7 +68,11 @@ const api = {
     setIgnoreMouse: (ignore: boolean): void => {
       ipcRenderer.send(IPC.setIgnoreMouse, ignore);
     },
+    /** Content size (CSS px) the pet page needs; the main process grows/shrinks the window to fit. */
+    setExtent: (width: number, height: number): Promise<void> => ipcRenderer.invoke(IPC.setExtent, width, height),
     onDropped: (l: Listener<{ dx: number; dy: number }>) => on(IPC.windowDropped, l),
+    /** Dev-only: the main process asks the page to submit a quick-chat message (OPENCLAW_PET_TEST_MESSAGE). */
+    onDebugSubmit: (l: Listener<string>) => on(IPC.debugSubmit, l),
   },
   app: {
     openSettings: (): Promise<void> => ipcRenderer.invoke(IPC.openSettings),

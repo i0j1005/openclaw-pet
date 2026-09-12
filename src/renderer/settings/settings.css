@@ -58,6 +58,18 @@ input[type="range"] { width: 240px; accent-color: var(--accent); }
 .asset .name { font-weight: 600; }
 .asset .fallback { color: var(--muted); font-size: 12px; }
 .asset .actions { display: flex; gap: 6px; }
+.grid-rows { display: grid; gap: 4px; }
+.mrow {
+  display: grid; grid-template-columns: 84px 42px 1fr 1fr; gap: 12px; align-items: center;
+  padding: 5px 8px; border-radius: 10px; background: var(--bg);
+}
+.mrow.off .knob { opacity: 0.45; }
+.mrow .name { font-weight: 600; }
+.mrow .knob { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.mrow .knob input[type="range"] { width: 100%; min-width: 80px; }
+.mrow .knob .val { min-width: 42px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text); }
+.hrow { grid-template-columns: 84px 220px 1fr; }
+.hrow .mhint { color: var(--muted); font-size: 12px; line-height: 1.3; }
 footer { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 8px; }
 #advanced summary { list-style: none; cursor: pointer; }
 #advanced summary h2 { display: inline; }

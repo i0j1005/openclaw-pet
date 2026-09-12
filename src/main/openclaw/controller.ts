@@ -6,14 +6,16 @@
 // metadata-only and free.
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
-import type {
-  ActivityState,
-  ChatStatusUpdate,
-  ConnectionInfo,
-  GatewaySettings,
-  PetSnapshot,
-  QuickChatResult,
-  ReactionState,
+import {
+  DEFAULT_SETTINGS,
+  type ActivityState,
+  type ChatStatusUpdate,
+  type ConnectionInfo,
+  type GatewaySettings,
+  type PetSnapshot,
+  type QuickChatResult,
+  type ReactionKind,
+  type ReactionState,
 } from "../../shared/types";
 import { discoverLocalGateway } from "./discovery";
 import type { DeviceIdentity } from "./device-identity";
@@ -60,7 +62,7 @@ export class OpenClawController extends EventEmitter {
   private enabled = false;
   private gatewaySettings: GatewaySettings = { mode: "auto" };
   private reactionsEnabled = true;
-  private reactionDurationMs = 7000;
+  private reactionHoldMs: Record<ReactionKind, number> = { ...DEFAULT_SETTINGS.reactionHoldMs };
   private reconnectTimer: NodeJS.Timeout | null = null;
   private reactionTimer: NodeJS.Timeout | null = null;
   private backoffMs = BACKOFF_MIN_MS;
@@ -79,11 +81,16 @@ export class OpenClawController extends EventEmitter {
 
   // ---- public API -----------------------------------------------------------
 
-  configure(params: { enabled: boolean; gateway: GatewaySettings; reactionsEnabled: boolean; reactionDurationMs: number }): void {
+  configure(params: {
+    enabled: boolean;
+    gateway: GatewaySettings;
+    reactionsEnabled: boolean;
+    reactionHoldMs: Record<ReactionKind, number>;
+  }): void {
     const gatewayChanged = JSON.stringify(params.gateway) !== JSON.stringify(this.gatewaySettings);
     this.gatewaySettings = params.gateway;
     this.reactionsEnabled = params.reactionsEnabled;
-    this.reactionDurationMs = params.reactionDurationMs;
+    this.reactionHoldMs = { ...params.reactionHoldMs };
     if (!params.reactionsEnabled) this.setReaction(null);
     if (params.enabled && (!this.enabled || gatewayChanged)) {
       this.enabled = true;
@@ -298,14 +305,17 @@ export class OpenClawController extends EventEmitter {
     const mine = this.myRunIds.has(p.runId);
     switch (p.state) {
       case "status":
-      case "delta":
-        this.touchRun(p.runId, p.sessionKey, p.agentId, mine);
-        if (mine && p.state === "delta") this.emitChatStatus({ runId: p.runId, phase: "thinking" });
+      case "delta": {
+        const run = this.touchRun(p.runId, p.sessionKey, p.agentId, mine);
+        if (mine && run.toolsRunning === 0) {
+          this.emitChatStatus({ runId: p.runId, phase: "thinking", ...(p.state === "delta" ? { text: extractMessageText(p.message) } : {}) });
+        }
         break;
+      }
       case "final":
       case "error":
       case "aborted": {
-        this.runs.delete(p.runId);
+        if (this.runs.delete(p.runId)) this.opts.log?.(`run ${p.runId.slice(0, 8)} ${p.state} (${p.sessionKey})`);
         const text = extractMessageText(p.message);
         if (p.state === "final" && text) this.lastReply = { text: truncate(text, 280), at: Date.now() };
         const reaction = classifyOutcome({ state: p.state, text, errorKind: p.errorKind });
@@ -379,6 +389,7 @@ export class OpenClawController extends EventEmitter {
     if (!run) {
       run = { sessionKey, agentId, startedAt: Date.now(), toolsRunning: 0, mine };
       this.runs.set(runId, run);
+      this.opts.log?.(`run ${runId.slice(0, 8)} started (${sessionKey || "?"})${mine ? " [quick chat]" : ""}`);
     }
     return run;
   }
@@ -408,7 +419,7 @@ export class OpenClawController extends EventEmitter {
       this.reaction = null;
       this.reactionTimer = null;
       this.emitSnapshot();
-    }, Math.max(REACTION_MIN_VISIBLE_MS, this.reactionDurationMs));
+    }, Math.max(REACTION_MIN_VISIBLE_MS, this.reactionHoldMs[reaction] ?? DEFAULT_SETTINGS.reactionHoldMs[reaction]));
   }
 
   private rememberSession(row: SessionRow): void {

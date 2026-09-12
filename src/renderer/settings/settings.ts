@@ -1,14 +1,22 @@
 // Settings window renderer.
 import {
+  AMBIENT_LIMITS,
+  AMBIENT_STATES,
+  DEFAULT_SETTINGS,
+  HOLD_LIMITS,
   PET_STATES,
+  REACTION_STATES,
   STATE_FALLBACKS,
   STATE_HINTS,
   STATE_LABELS,
+  type AmbientState,
   type Character,
   type ConnectionInfo,
   type PetState,
+  type ReactionKind,
   type Settings,
 } from "../../shared/types";
+import type { SettingsPatch } from "../../main/settings-store";
 
 const api = window.pet;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -34,14 +42,14 @@ function current(): Character | undefined {
   return characters.find((c) => c.id === settings.characterId) ?? characters[0];
 }
 
-async function save(patch: Partial<Settings>): Promise<void> {
+async function save(patch: SettingsPatch): Promise<void> {
   settings = await api.settings.update(patch);
   renderSettings();
 }
 
 function bindSwitch(id: keyof Settings): void {
   const el = $<HTMLInputElement>(id);
-  el.addEventListener("change", () => void save({ [id]: el.checked } as Partial<Settings>));
+  el.addEventListener("change", () => void save({ [id]: el.checked } as SettingsPatch));
 }
 
 // ---- rendering ------------------------------------------------------------------
@@ -52,11 +60,10 @@ function renderSettings(): void {
   $<HTMLInputElement>("alwaysOnTop").checked = settings.alwaysOnTop;
   $<HTMLInputElement>("reactionsEnabled").checked = settings.reactionsEnabled;
   $<HTMLInputElement>("hoverChatEnabled").checked = settings.hoverChatEnabled;
-  $<HTMLInputElement>("ambientMotionEnabled").checked = settings.ambientMotionEnabled;
   $<HTMLInputElement>("size").value = String(settings.size);
   $("sizeLabel").textContent = `${settings.size} px`;
-  $<HTMLInputElement>("reactionDuration").value = String(Math.round(settings.reactionDurationMs / 1000));
-  $("reactionLabel").textContent = `${Math.round(settings.reactionDurationMs / 1000)} s`;
+  renderAmbientRows();
+  renderHoldRows();
   $<HTMLSelectElement>("gwMode").value = settings.gateway.mode;
   $<HTMLInputElement>("gwUrl").value = settings.gateway.url ?? "";
   $<HTMLInputElement>("gwToken").value = settings.gateway.token ?? "";
@@ -89,6 +96,74 @@ function renderConnection(info: ConnectionInfo): void {
     target.hidden = false;
     target.textContent = `Quick chat continues: ${info.targetSession.label}${info.targetSession.agentId ? ` (agent ${info.targetSession.agentId})` : ""}`;
   } else target.hidden = true;
+}
+
+// Per-state ambient motion rows are built once; afterwards only their values are refreshed so a
+// slider being dragged is never re-created under the cursor.
+const AMBIENT_HINTS: Record<AmbientState, string> = {
+  idle: "breathing",
+  thinking: "swaying",
+  working: "bouncing",
+  question: "head tilt",
+};
+
+function renderAmbientRows(): void {
+  const container = $("ambientRows");
+  if (!container.childElementCount) {
+    for (const state of AMBIENT_STATES) {
+      const row = document.createElement("div");
+      row.className = "mrow";
+      row.dataset.state = state;
+      row.innerHTML = `
+        <div><div class="name">${STATE_LABELS[state]}</div><div class="muted">${AMBIENT_HINTS[state]}</div></div>
+        <label class="switch"><input type="checkbox" class="on" /><span></span></label>
+        <label class="knob">Intensity <input type="range" class="intensity" min="${AMBIENT_LIMITS.intensity.min}" max="${AMBIENT_LIMITS.intensity.max}" step="0.1" /><span class="val i"></span></label>
+        <label class="knob">Speed <input type="range" class="speed" min="${AMBIENT_LIMITS.speed.min}" max="${AMBIENT_LIMITS.speed.max}" step="0.05" /><span class="val s"></span></label>`;
+      const on = row.querySelector<HTMLInputElement>(".on")!;
+      const intensity = row.querySelector<HTMLInputElement>(".intensity")!;
+      const speed = row.querySelector<HTMLInputElement>(".speed")!;
+      on.addEventListener("change", () => void save({ ambientMotion: { [state]: { enabled: on.checked } } }));
+      intensity.addEventListener("input", () => (row.querySelector(".val.i")!.textContent = `${Math.round(Number(intensity.value) * 100)}%`));
+      intensity.addEventListener("change", () => void save({ ambientMotion: { [state]: { intensity: Number(intensity.value) } } }));
+      speed.addEventListener("input", () => (row.querySelector(".val.s")!.textContent = `${Number(speed.value).toFixed(2)}×`));
+      speed.addEventListener("change", () => void save({ ambientMotion: { [state]: { speed: Number(speed.value) } } }));
+      container.appendChild(row);
+    }
+  }
+  for (const row of container.querySelectorAll<HTMLElement>(".mrow")) {
+    const m = settings.ambientMotion[row.dataset.state as AmbientState];
+    row.classList.toggle("off", !m.enabled);
+    row.querySelector<HTMLInputElement>(".on")!.checked = m.enabled;
+    row.querySelector<HTMLInputElement>(".intensity")!.value = String(m.intensity);
+    row.querySelector(".val.i")!.textContent = `${Math.round(m.intensity * 100)}%`;
+    row.querySelector<HTMLInputElement>(".speed")!.value = String(m.speed);
+    row.querySelector(".val.s")!.textContent = `${m.speed.toFixed(2)}×`;
+  }
+}
+
+function renderHoldRows(): void {
+  const container = $("holdRows");
+  if (!container.childElementCount) {
+    for (const r of REACTION_STATES) {
+      const row = document.createElement("div");
+      row.className = "mrow hrow";
+      row.dataset.reaction = r;
+      row.innerHTML = `
+        <div class="name">${STATE_LABELS[r]}</div>
+        <label class="knob"><input type="range" class="hold" min="${HOLD_LIMITS.min / 1000}" max="30" step="1" /><span class="val h"></span></label>
+        <span class="mhint">${STATE_HINTS[r]}</span>`;
+      const hold = row.querySelector<HTMLInputElement>(".hold")!;
+      hold.addEventListener("input", () => (row.querySelector(".val.h")!.textContent = `${hold.value} s`));
+      hold.addEventListener("change", () => void save({ reactionHoldMs: { [r]: Number(hold.value) * 1000 } }));
+      container.appendChild(row);
+    }
+  }
+  for (const row of container.querySelectorAll<HTMLElement>(".hrow")) {
+    const r = row.dataset.reaction as ReactionKind;
+    const s = Math.round(settings.reactionHoldMs[r] / 1000);
+    row.querySelector<HTMLInputElement>(".hold")!.value = String(s);
+    row.querySelector(".val.h")!.textContent = `${s} s`;
+  }
 }
 
 function renderCharacterSelect(): void {
@@ -175,15 +250,15 @@ bindSwitch("launchAtLogin");
 bindSwitch("alwaysOnTop");
 bindSwitch("reactionsEnabled");
 bindSwitch("hoverChatEnabled");
-bindSwitch("ambientMotionEnabled");
 
 const sizeInput = $<HTMLInputElement>("size");
 sizeInput.addEventListener("input", () => ($("sizeLabel").textContent = `${sizeInput.value} px`));
 sizeInput.addEventListener("change", () => void save({ size: Number(sizeInput.value) }));
 
-const reactionInput = $<HTMLInputElement>("reactionDuration");
-reactionInput.addEventListener("input", () => ($("reactionLabel").textContent = `${reactionInput.value} s`));
-reactionInput.addEventListener("change", () => void save({ reactionDurationMs: Number(reactionInput.value) * 1000 }));
+$("bubbleReset").addEventListener("click", async () => {
+  await save({ bubble: { ...DEFAULT_SETTINGS.bubble, collapsed: false } });
+  toast("Bubble size reset");
+});
 
 $<HTMLSelectElement>("characterSelect").addEventListener("change", (e) => {
   void save({ characterId: (e.target as HTMLSelectElement).value });

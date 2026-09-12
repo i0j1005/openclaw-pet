@@ -11,6 +11,11 @@
     "thinking": "thinking.svg",
     "working": "working.svg",
     "happy": "happy.svg",
+    "praise": "praise.svg",
+    "encourage": "encourage.svg",
+    "shy": "shy.svg",
+    "sad": "sad.svg",
+    "tired": "tired.svg",
     "error": "error.svg",
     "question": "question.svg",
     "offline": "offline.svg"

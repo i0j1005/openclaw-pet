@@ -10,11 +10,25 @@ export const PET_STATES = [
   "thinking",
   "working",
   "happy",
+  "praise",
+  "encourage",
+  "shy",
+  "sad",
+  "tired",
   "error",
   "question",
   "offline",
 ] as const;
 export type PetState = (typeof PET_STATES)[number];
+
+/** Reactions derived from the last reply (a subset of PetState). */
+export const REACTION_STATES = ["happy", "praise", "encourage", "shy", "sad", "tired", "error", "question"] as const;
+export type ReactionKind = (typeof REACTION_STATES)[number];
+export type ReactionState = ReactionKind | null;
+
+/** States that can have looping ambient motion. */
+export const AMBIENT_STATES = ["idle", "thinking", "working", "question"] as const;
+export type AmbientState = (typeof AMBIENT_STATES)[number];
 
 /** Fallback chain used when a character has no asset for a state. */
 export const STATE_FALLBACKS: Record<PetState, PetState[]> = {
@@ -26,6 +40,11 @@ export const STATE_FALLBACKS: Record<PetState, PetState[]> = {
   thinking: ["working", "idle"],
   working: ["thinking", "idle"],
   happy: ["idle"],
+  praise: ["happy", "idle"],
+  encourage: ["happy", "idle"],
+  shy: ["happy", "idle"],
+  sad: ["idle"],
+  tired: ["sad", "idle"],
   error: ["idle"],
   question: ["thinking", "idle"],
   offline: ["idle"],
@@ -40,6 +59,11 @@ export const STATE_LABELS: Record<PetState, string> = {
   thinking: "Thinking",
   working: "Working",
   happy: "Happy",
+  praise: "Praise",
+  encourage: "Encourage",
+  shy: "Shy",
+  sad: "Sad",
+  tired: "Tired",
   error: "Error",
   question: "Question",
   offline: "Offline",
@@ -54,6 +78,11 @@ export const STATE_HINTS: Record<PetState, string> = {
   thinking: "OpenClaw is generating a reply.",
   working: "OpenClaw is running a tool (files, shell, web…).",
   happy: "The last reply reported success.",
+  praise: "The reply praises you (\"great idea\", \"잘하셨어요\").",
+  encourage: "The reply cheers you on (\"you can do it\", \"화이팅\").",
+  shy: "The reply is bashful or embarrassed (\"부끄럽네요\").",
+  sad: "The reply delivers bad or sad news.",
+  tired: "The reply sounds worn out (\"phew\", \"힘들었어요\").",
   error: "The last run failed.",
   question: "OpenClaw is asking you something.",
   offline: "OpenClaw is off or unreachable.",
@@ -86,7 +115,6 @@ export interface ConnectionInfo {
 }
 
 export type ActivityState = "idle" | "thinking" | "working";
-export type ReactionState = "happy" | "error" | "question" | null;
 
 /** What the pet should currently look like, derived entirely locally. */
 export interface PetSnapshot {
@@ -105,7 +133,25 @@ export interface GatewaySettings {
   password?: string;
 }
 
+/** Looping motion for one state. `intensity` and `speed` are multipliers (1 = the built-in motion). */
+export interface AmbientMotionSetting {
+  enabled: boolean;
+  intensity: number;
+  speed: number;
+}
+
+export interface BubbleSettings {
+  /** Bubble collapsed to a small pill. */
+  collapsed: boolean;
+  /** Bubble width in px. */
+  width: number;
+  /** Maximum bubble height in px; longer replies scroll inside. */
+  maxHeight: number;
+}
+
 export interface Settings {
+  /** Bumped whenever keys change shape; the store migrates older files. */
+  settingsVersion: number;
   openclawEnabled: boolean;
   launchAtLogin: boolean;
   alwaysOnTop: boolean;
@@ -113,15 +159,23 @@ export interface Settings {
   size: number;
   reactionsEnabled: boolean;
   hoverChatEnabled: boolean;
-  /** Looping idle/thinking/working motion. Off by default: it costs compositor time on an always-on-top window. */
-  ambientMotionEnabled: boolean;
-  /** How long happy/error/question reactions stay visible, in ms. */
-  reactionDurationMs: number;
+  /** Per-state looping motion. Idle is off by default: it costs compositor time on an always-on-top window. */
+  ambientMotion: Record<AmbientState, AmbientMotionSetting>;
+  /** How long each reaction stays visible, in ms. */
+  reactionHoldMs: Record<ReactionKind, number>;
+  bubble: BubbleSettings;
   position?: { x: number; y: number };
   gateway: GatewaySettings;
 }
 
+export const SETTINGS_VERSION = 2;
+
+export const AMBIENT_LIMITS = { intensity: { min: 0.2, max: 2.5 }, speed: { min: 0.25, max: 3 } } as const;
+export const BUBBLE_LIMITS = { width: { min: 160, max: 640 }, maxHeight: { min: 48, max: 640 } } as const;
+export const HOLD_LIMITS = { min: 1000, max: 60_000 } as const;
+
 export const DEFAULT_SETTINGS: Settings = {
+  settingsVersion: SETTINGS_VERSION,
   openclawEnabled: true,
   launchAtLogin: false,
   alwaysOnTop: true,
@@ -129,8 +183,23 @@ export const DEFAULT_SETTINGS: Settings = {
   size: 160,
   reactionsEnabled: true,
   hoverChatEnabled: true,
-  ambientMotionEnabled: false,
-  reactionDurationMs: 7000,
+  ambientMotion: {
+    idle: { enabled: false, intensity: 1, speed: 1 },
+    thinking: { enabled: false, intensity: 1, speed: 1 },
+    working: { enabled: false, intensity: 1, speed: 1 },
+    question: { enabled: false, intensity: 1, speed: 1 },
+  },
+  reactionHoldMs: {
+    happy: 7000,
+    praise: 7000,
+    encourage: 7000,
+    shy: 4000,
+    sad: 8000,
+    tired: 8000,
+    error: 10_000,
+    question: 12_000,
+  },
+  bubble: { collapsed: false, width: 260, maxHeight: 160 },
   gateway: { mode: "auto" },
 };
 
@@ -170,6 +239,7 @@ export const IPC = {
   dragStart: "pet:dragStart",
   dragEnd: "pet:dragEnd",
   setIgnoreMouse: "pet:setIgnoreMouse",
+  setExtent: "pet:setExtent",
   openSettings: "app:openSettings",
   quit: "app:quit",
   openExternal: "app:openExternal",
@@ -180,4 +250,5 @@ export const IPC = {
   connectionChanged: "connection:changed",
   chatStatus: "chat:status",
   windowDropped: "pet:dropped",
+  debugSubmit: "pet:debugSubmit",
 } as const;

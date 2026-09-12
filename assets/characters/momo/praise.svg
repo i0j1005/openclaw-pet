@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <g stroke="#D67858" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="56" cy="58" r="18" fill="#FFB89A"/><circle cx="144" cy="58" r="18" fill="#FFB89A"/>
+    <circle cx="56" cy="60" r="8" fill="#FF9AA8" stroke="none"/><circle cx="144" cy="60" r="8" fill="#FF9AA8" stroke="none"/>
+    <ellipse cx="100" cy="118" rx="72" ry="64" fill="#FFB89A"/>
+  </g>
+  <circle cx="64" cy="132" r="12" fill="#FF9AA8" opacity="0.85"/><circle cx="136" cy="132" r="12" fill="#FF9AA8" opacity="0.85"/>
+  <path d="M78 104 l3 8 8 3 -8 3 -3 8 -3 -8 -8 -3 8 -3z" fill="#2B2024"/><path d="M122 104 l3 8 8 3 -8 3 -3 8 -3 -8 -8 -3 8 -3z" fill="#2B2024"/>
+  <path d="M84 134 Q100 152 116 134 Z" fill="#2B2024"/><path d="M92 142 Q100 149 108 142 Z" fill="#FF6F87"/>
+  <g stroke="#D67858" stroke-width="4" stroke-linejoin="round">
+    <path d="M152 128 v-22 q0 -8 8 -6 q6 2 4 10 l-2 8 h10 q8 0 6 8 l-4 14 q-2 6 -8 6 h-14z" fill="#FFB89A"/>
+  </g>
+  <path d="M26 56 l3 8 8 3 -8 3 -3 8 -3 -8 -8 -3 8 -3z" fill="#FFD166"/><path d="M178 44 l3 8 8 3 -8 3 -3 8 -3 -8 -8 -3 8 -3z" fill="#FFD166"/>
+  <path d="M40 30 l2 5 5 2 -5 2 -2 5 -2 -5 -5 -2 5 -2z" fill="#FFD166"/>
+</svg>

@@ -14,6 +14,9 @@ html, body {
   flex-direction: column;
   align-items: center;
   padding: 12px 12px 0;
+  /* Ambient motion knobs, set per state from Settings (see render() in pet.ts). */
+  --amb-i: 1;
+  --amb-speed: 1;
 }
 #char {
   position: relative;
@@ -80,35 +83,58 @@ html, body {
 #stage.state-pressed #img { transform: scale(1.06, 0.9); }
 #stage.state-drop #img { animation: land 0.7s cubic-bezier(0.2, 0.8, 0.3, 1.4) 1; }
 #stage.state-happy #img { animation: hop 0.9s ease-in-out 2; }
+#stage.state-praise #img { animation: hop 0.9s ease-in-out 2; }
+#stage.state-encourage #img { animation: cheer 0.6s ease-in-out 3; }
+#stage.state-shy #img { animation: wiggle 0.5s ease-in-out 2; }
+#stage.state-sad #img { animation: droop 1.2s ease-out 1 forwards; }
+#stage.state-tired #img { animation: sag 1.6s ease-out 1 forwards; }
 #stage.state-error #img { animation: shake 0.6s ease-in-out 1; }
+#stage.state-sad.fallback #img { filter: saturate(0.7) drop-shadow(0 4px 6px rgba(0,0,0,0.18)); }
+#stage.state-tired.fallback #img { filter: saturate(0.6) brightness(0.95) drop-shadow(0 4px 6px rgba(0,0,0,0.18)); }
 
-/* ---- ambient (looping) motion: opt-in via the "Ambient motion" setting, since a looping
-   transform on a transparent always-on-top window keeps the compositor busy at idle ---- */
-#stage.ambient.state-idle #img { animation: breathe 3.6s ease-in-out infinite; }
-#stage.ambient.state-thinking #img { animation: sway 2s ease-in-out infinite; }
-#stage.ambient.state-working #img { animation: bounce 0.9s ease-in-out infinite; }
-#stage.ambient.state-question #img { animation: tilt 1.6s ease-in-out infinite; }
+/* ---- ambient (looping) motion: per-state opt-in in Settings, since a looping transform on a
+   transparent always-on-top window keeps the compositor busy. Amplitude and speed come from the
+   --amb-i / --amb-speed custom properties the renderer sets for the current state. ---- */
+#stage.ambient.state-idle #img { animation: breathe calc(3.6s / var(--amb-speed)) ease-in-out infinite; }
+#stage.ambient.state-thinking #img { animation: sway calc(2s / var(--amb-speed)) ease-in-out infinite; }
+#stage.ambient.state-working #img { animation: bounce calc(0.9s / var(--amb-speed)) ease-in-out infinite; }
+#stage.ambient.state-question #img { animation: tilt calc(1.6s / var(--amb-speed)) ease-in-out infinite; }
 
-@keyframes breathe { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.02, 0.98); } }
+@keyframes breathe {
+  0%, 100% { transform: scale(1, 1); }
+  50% { transform: scale(calc(1 + 0.02 * var(--amb-i)), calc(1 - 0.02 * var(--amb-i))); }
+}
+@keyframes sway {
+  0%, 100% { transform: rotate(calc(-2deg * var(--amb-i))) translateY(0); }
+  50% { transform: rotate(calc(2deg * var(--amb-i))) translateY(calc(-3px * var(--amb-i))); }
+}
+@keyframes bounce {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  50% { transform: translateY(calc(-6px * var(--amb-i))) scale(calc(1 - 0.02 * var(--amb-i)), calc(1 + 0.03 * var(--amb-i))); }
+}
+@keyframes tilt {
+  0%, 100% { transform: rotate(0); }
+  50% { transform: rotate(calc(6deg * var(--amb-i))); }
+}
 @keyframes land { 0% { transform: scale(1.15, 0.8); } 60% { transform: scale(0.95, 1.08); } 100% { transform: scale(1, 1); } }
-@keyframes sway { 0%, 100% { transform: rotate(-2deg) translateY(0); } 50% { transform: rotate(2deg) translateY(-3px); } }
-@keyframes bounce { 0%, 100% { transform: translateY(0) scale(1, 1); } 50% { transform: translateY(-6px) scale(0.98, 1.03); } }
 @keyframes hop { 0%, 100% { transform: translateY(0); } 40% { transform: translateY(-14px) scale(1.02, 1.04); } 60% { transform: translateY(0) scale(1.04, 0.96); } }
+@keyframes cheer { 0%, 100% { transform: translateY(0) rotate(0); } 50% { transform: translateY(-10px) rotate(-4deg); } }
+@keyframes wiggle { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(-4deg); } 75% { transform: rotate(4deg); } }
+@keyframes droop { 0% { transform: translateY(0) rotate(0); } 100% { transform: translateY(5px) rotate(-3deg) scale(0.98); } }
+@keyframes sag { 0% { transform: scale(1, 1); } 100% { transform: translateY(6px) scale(1.03, 0.94); } }
 @keyframes shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(4px); } }
-@keyframes tilt { 0%, 100% { transform: rotate(0); } 50% { transform: rotate(6deg); } }
 @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
-/* ---- quick chat ---- */
+/* ---- quick chat input (only laid out while open, so the bubble sits right under the character) ---- */
 #chat {
   margin-top: 6px;
   width: 100%;
   max-width: 320px;
-  opacity: 0;
-  transform: translateY(-6px);
-  transition: opacity 0.18s ease, transform 0.18s ease;
-  pointer-events: none;
+  display: none;
+  animation: fadeDown 0.18s ease;
 }
-#stage.chat-open #chat { opacity: 1; transform: translateY(0); pointer-events: auto; }
+#stage.chat-open #chat { display: block; }
+@keyframes fadeDown { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
 #chatForm { margin: 0; }
 #chatInput {
   width: 100%;
@@ -124,24 +150,90 @@ html, body {
 }
 #chatInput:focus { border-color: var(--accent); box-shadow: 0 4px 14px rgba(255, 122, 89, 0.3); }
 #chatInput:disabled { opacity: 0.6; }
-#chatStatus {
-  margin: 6px 4px 0;
+
+/* ---- speech bubble: the last exchange, shown after Enter until the next message ---- */
+#bubble {
+  --bubble-w: 260px;
+  --bubble-h: 160px;
+  position: relative;
+  margin-top: 12px;
+  width: var(--bubble-w);
+  flex: none;
+  background: rgba(255, 255, 255, 0.97);
+  color: #1c1c22;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 14px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
+  font-size: 12.5px;
+  line-height: 1.4;
+  cursor: pointer;
+  user-select: text;
+  -webkit-user-select: text;
+}
+#bubble[hidden] { display: none; }
+#bubble::before {
+  /* tail pointing up at the character */
+  content: "";
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  background: inherit;
+  border-left: 1px solid rgba(0, 0, 0, 0.1);
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  transform: rotate(45deg);
+  border-radius: 2px;
+}
+#bubbleBody {
+  max-height: var(--bubble-h);
+  overflow-y: auto;
+  padding: 9px 12px 10px;
+  overscroll-behavior: contain;
+}
+#bubbleUser {
+  color: #6b6b76;
   font-size: 11.5px;
-  line-height: 1.35;
-  color: #fff;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7), 0 0 6px rgba(0, 0, 0, 0.5);
-  max-height: 34px;
+  margin-bottom: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+#bubbleUser::before { content: "You: "; font-weight: 600; }
+#bubbleReply { white-space: pre-wrap; word-break: break-word; }
+#bubble.err #bubbleReply { color: var(--err); }
+#bubble.pending #bubbleReply { color: #6b6b76; font-style: italic; }
+#bubble.pending #bubbleReply::after { content: ""; animation: dots 1.2s steps(4, end) infinite; }
+@keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
+#bubblePill {
+  display: none;
+  padding: 6px 12px;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  text-align: center;
-  opacity: 0;
-  transition: opacity 0.2s;
+  max-width: var(--bubble-w);
 }
-#chatStatus.show { opacity: 1; }
-#chatStatus.err { color: #ffd1d1; }
+#bubblePill::before { content: "💬 "; }
+#bubble.collapsed { width: auto; max-width: var(--bubble-w); border-radius: 16px; }
+#bubble.collapsed #bubbleBody, #bubble.collapsed #bubbleGrip { display: none; }
+#bubble.collapsed #bubblePill { display: block; }
+#bubbleGrip {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  opacity: 0.45;
+  background:
+    linear-gradient(135deg, transparent 0 55%, #8a8a94 55% 62%, transparent 62% 72%, #8a8a94 72% 79%, transparent 79%);
+  border-bottom-right-radius: 12px;
+}
+#bubbleGrip:hover, #bubble.resizing #bubbleGrip { opacity: 0.9; }
+#bubble.resizing { cursor: nwse-resize; }
+#bubbleBody::-webkit-scrollbar { width: 6px; }
+#bubbleBody::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.18); border-radius: 3px; }
+
 @media (prefers-reduced-motion: reduce) {
   #img { animation: none !important; }
 }

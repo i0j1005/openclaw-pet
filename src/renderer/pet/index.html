@@ -18,7 +18,14 @@
         <form id="chatForm" autocomplete="off">
           <input id="chatInput" type="text" placeholder="Ask OpenClaw…" maxlength="4000" spellcheck="false" />
         </form>
-        <div id="chatStatus"></div>
+      </div>
+      <div id="bubble" class="hit" hidden title="Click to collapse or expand">
+        <div id="bubbleBody">
+          <div id="bubbleUser"></div>
+          <div id="bubbleReply"></div>
+        </div>
+        <div id="bubblePill"></div>
+        <div id="bubbleGrip" title="Drag to resize"></div>
       </div>
     </div>
     <script src="pet.js"></script>
