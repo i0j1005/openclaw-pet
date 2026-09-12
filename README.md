@@ -267,7 +267,12 @@ Verified on this machine (macOS, OpenClaw 2026.9.3, live Gateway with a Discord-
 - Config discovery from `~/.openclaw/openclaw.json`, handshake with challenge + Ed25519 device auth,
   loopback auto-pairing, `hello-ok` with `operator.read`/`operator.write`, `sessions.subscribe` bootstrap.
 - App launch: pet window, tray, settings window, connection turns green, sessions loaded.
+- `npm run dist:mac -- --dir` packaging (unsigned).
 - Unit tests: 14 passing (`npm test`).
+- Idle footprint in dev mode (`node scripts/dev-run.mjs 12`): about 400 MB of *summed* resident memory across the
+  Electron main, GPU and renderer processes. That figure double-counts shared framework pages, so the real
+  unique memory is well under half of it, and CPU is at zero while idle (no timers, no polling). A Tauri
+  shell would cut this further; see BLOCKERS.md for why it was not used here.
 
 Not verified here (see `BLOCKERS.md`):
 
