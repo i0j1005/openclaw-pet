@@ -255,7 +255,8 @@ export class GatewayClient extends EventEmitter {
       },
       role: "operator",
       scopes,
-      caps: this.opts.caps ?? ["tool-events"],
+      // agent-kind: agents.list then carries `kind`, so system agents can be kept out of the pickers.
+      caps: this.opts.caps ?? ["tool-events", "agent-kind"],
       auth: Object.keys(auth).length ? auth : undefined,
       locale: Intl.DateTimeFormat().resolvedOptions().locale,
       userAgent: `openclaw-pet/${this.opts.clientVersion}`,

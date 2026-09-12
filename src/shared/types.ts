@@ -91,9 +91,22 @@ export const STATE_HINTS: Record<PetState, string> = {
 export interface Character {
   id: string;
   name: string;
-  /** Absolute paths per state. Missing states use the fallback chain. */
-  assets: Partial<Record<PetState, string>>;
+  /**
+   * Absolute paths per state, one or more variants each. The pet picks one at random every time it
+   * enters the state. States with no variants use the fallback chain.
+   */
+  assets: Partial<Record<PetState, string[]>>;
+  /** OpenClaw agent this character talks to. Unset = any agent, most recent session (the default). */
+  agentId?: string;
   builtIn?: boolean;
+}
+
+/** One row of the gateway's `agents.list` roster, reduced to what the pickers need. */
+export interface AgentOption {
+  id: string;
+  name: string;
+  emoji?: string;
+  isDefault?: boolean;
 }
 
 export type ConnectionStatus =
@@ -226,14 +239,16 @@ export const IPC = {
   addCharacter: "characters:add",
   renameCharacter: "characters:rename",
   deleteCharacter: "characters:delete",
-  setCharacterAsset: "characters:setAsset",
-  setCharacterAssetFromPath: "characters:setAssetFromPath",
-  clearCharacterAsset: "characters:clearAsset",
+  setCharacterAgent: "characters:setAgent",
+  addCharacterAssetVariant: "characters:addAssetVariant",
+  addCharacterAssetVariantFromBytes: "characters:addAssetVariantFromBytes",
+  removeCharacterAssetVariant: "characters:removeAssetVariant",
   duplicateCharacter: "characters:duplicate",
   revealCharacter: "characters:reveal",
   importCharacterFolder: "characters:importFolder",
   pickImage: "dialog:pickImage",
   getConnection: "connection:get",
+  listAgents: "connection:listAgents",
   getSnapshot: "pet:getSnapshot",
   sendQuickChat: "chat:send",
   dragStart: "pet:dragStart",

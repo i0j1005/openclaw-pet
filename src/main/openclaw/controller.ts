@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import {
   DEFAULT_SETTINGS,
   type ActivityState,
+  type AgentOption,
   type ChatStatusUpdate,
   type ConnectionInfo,
   type GatewaySettings,
@@ -63,6 +64,8 @@ export class OpenClawController extends EventEmitter {
   private gatewaySettings: GatewaySettings = { mode: "auto" };
   private reactionsEnabled = true;
   private reactionHoldMs: Record<ReactionKind, number> = { ...DEFAULT_SETTINGS.reactionHoldMs };
+  /** Agent the active character is bound to; null = any agent, most recent session. */
+  private targetAgentId: string | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private reactionTimer: NodeJS.Timeout | null = null;
   private backoffMs = BACKOFF_MIN_MS;
@@ -105,8 +108,47 @@ export class OpenClawController extends EventEmitter {
     }
   }
 
+  /**
+   * Binds the quick chat to one agent (the active character's `agentId`) or to none. Re-targets the
+   * session and moves the transcript subscription right away; no tokens involved.
+   */
+  setTargetAgent(agentId: string | null | undefined): void {
+    const next = agentId?.trim() || null;
+    if (next === this.targetAgentId) return;
+    this.targetAgentId = next;
+    this.opts.log?.(`target agent → ${next ?? "(any)"}`);
+    this.emit("connection", this.getConnection());
+    void this.syncMessageSubscription();
+  }
+
   getConnection(): ConnectionInfo {
     return { ...this.connection, targetSession: this.describeTargetSession() };
+  }
+
+  /** Visible agents (`agents.list`, metadata-only). System rows are dropped; an empty list means "unknown". */
+  async listAgents(): Promise<AgentOption[]> {
+    const client = this.client;
+    if (!client?.connected) return [];
+    try {
+      const res = await client.request<{ defaultId?: string; agents?: Array<{ id?: string; kind?: string; name?: string; identity?: { name?: string; emoji?: string } }> }>(
+        "agents.list",
+        {},
+      );
+      const out: AgentOption[] = [];
+      for (const a of res?.agents ?? []) {
+        if (!a || typeof a.id !== "string" || !a.id || a.kind === "system") continue;
+        out.push({
+          id: a.id,
+          name: a.identity?.name || a.name || a.id,
+          ...(a.identity?.emoji ? { emoji: a.identity.emoji } : {}),
+          ...(res?.defaultId === a.id ? { isDefault: true } : {}),
+        });
+      }
+      return out;
+    } catch (err) {
+      this.opts.log?.(`agents.list failed: ${(err as Error).message}`);
+      return [];
+    }
   }
 
   getSnapshot(): PetSnapshot {
@@ -543,19 +585,23 @@ export class OpenClawController extends EventEmitter {
    * "Most recent session the user was using": highest lastInteractionAt among the user's own
    * conversations. Automation rows and shared group/channel rooms are skipped: a quick chat from the
    * desktop belongs in the personal (main/direct) conversation, not in someone's Discord channel.
+   * When the active character is bound to an agent, only that agent's sessions count, and its
+   * `agent:<id>:main` session is used until it has one.
    */
   private pickTargetSession(): SessionRow | null {
+    const wanted = this.targetAgentId;
     let best: SessionRow | null = null;
     for (const row of this.sessions.values()) {
       if (this.isIgnoredSession(row.key)) continue;
       if (row.kind && !["direct", "main", "thread"].includes(row.kind)) continue;
+      if (wanted && sessionAgentId(row) !== wanted) continue;
       const t = row.lastInteractionAt ?? row.updatedAt ?? 0;
       const bestT = best ? (best.lastInteractionAt ?? best.updatedAt ?? 0) : -1;
       if (t > bestT) best = row;
     }
     if (!best) {
-      // Fall back to the main session of the first known agent (or "main").
-      const agentId = [...this.sessions.values()][0]?.agentId ?? "main";
+      // Fall back to the main session of the bound agent, else of the first known agent (or "main").
+      const agentId = wanted ?? [...this.sessions.values()][0]?.agentId ?? "main";
       return { key: `agent:${agentId}:main`, agentId };
     }
     return best;
@@ -631,6 +677,13 @@ function normalizeWsUrl(raw: string): string {
   if (/^https?:\/\//i.test(url)) url = url.replace(/^http/i, "ws");
   if (!/^wss?:\/\//i.test(url)) url = `ws://${url}`;
   return url.replace(/\/+$/, "");
+}
+
+/** Agent of a session row: the explicit field, else the `agent:<id>:…` key prefix. */
+function sessionAgentId(row: SessionRow): string | undefined {
+  if (typeof row.agentId === "string" && row.agentId) return row.agentId;
+  const m = /^agent:([^:]+):/.exec(row.key);
+  return m?.[1];
 }
 
 function truncate(text: string, max: number): string {

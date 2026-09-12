@@ -92,16 +92,50 @@ function displayState(): PetState {
   return "idle";
 }
 
+/**
+ * Which variant is on screen. A random variant is rolled each time the pet *enters* a state (or the
+ * character changes), never on a plain re-render, so a pose stays put while the mouse moves or the
+ * connection dot changes; re-entering the same state rolls again.
+ */
+let pick: { state: PetState; owner: PetState; index: number } | null = null;
+
 function resolveAsset(state: PetState): { src: string | null; fallback: boolean } {
-  if (!character) return { src: null, fallback: true };
-  const direct = character.assets[state];
-  if (direct) return { src: fileUrl(direct), fallback: false };
-  for (const fb of STATE_FALLBACKS[state]) {
-    const p = character.assets[fb];
-    if (p) return { src: fileUrl(p), fallback: true };
+  if (!character) {
+    pick = null;
+    return { src: null, fallback: true };
   }
-  return { src: null, fallback: true };
+  const owner = ownerState(character, state);
+  if (!owner) {
+    pick = null;
+    return { src: null, fallback: true };
+  }
+  const variants = character.assets[owner]!;
+  if (!pick || pick.state !== state || pick.owner !== owner || pick.index >= variants.length) {
+    pick = { state, owner, index: pickVariant(variants.length, pick?.owner === owner ? pick.index : -1) };
+  }
+  return { src: fileUrl(variants[pick.index]), fallback: owner !== state };
 }
+
+/** The state whose variants are shown for `state`: itself, else the first fallback that has any. */
+function ownerState(c: Character, state: PetState): PetState | null {
+  if (c.assets[state]?.length) return state;
+  for (const fb of STATE_FALLBACKS[state]) if (c.assets[fb]?.length) return fb;
+  return null;
+}
+
+/** Uniform random index; with two or more variants it avoids repeating the one just shown. */
+function pickVariant(count: number, previous: number): number {
+  if (count <= 1) return 0;
+  let i = Math.floor(Math.random() * count);
+  if (i === previous) i = (i + 1 + Math.floor(Math.random() * (count - 1))) % count;
+  return i;
+}
+
+/** Dev/test hook (window.__pet.variant()): which file is showing, so captures can prove the rotation. */
+(window as any).__pet = {
+  variant: () => (pick ? { state: pick.state, owner: pick.owner, index: pick.index, src: currentSrc } : null),
+  state: () => displayState(),
+};
 
 function fileUrl(path: string): string {
   const normalized = path.replace(/\\/g, "/");
@@ -434,7 +468,13 @@ api.pet.onDebugSubmit((text) => {
 async function loadCharacter(): Promise<void> {
   if (!settings) return;
   const all = await api.characters.list();
-  character = all.find((c) => c.id === settings!.characterId) ?? all[0] ?? null;
+  setCharacter(all.find((c) => c.id === settings!.characterId) ?? all[0] ?? null);
+}
+
+/** Swapping to another character re-rolls the variant; edits to the same character keep the current one. */
+function setCharacter(next: Character | null): void {
+  if (next?.id !== character?.id) pick = null;
+  character = next;
   currentSrc = "";
   render();
 }
@@ -445,9 +485,7 @@ api.settings.onChange((s) => {
   if (characterChanged) void loadCharacter();
 });
 api.characters.onChange((all) => {
-  character = all.find((c) => c.id === settings?.characterId) ?? all[0] ?? null;
-  currentSrc = "";
-  render();
+  setCharacter(all.find((c) => c.id === settings?.characterId) ?? all[0] ?? null);
 });
 api.openclaw.onSnapshot((snap) => {
   snapshot = snap;

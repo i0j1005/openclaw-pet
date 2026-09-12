@@ -51,10 +51,18 @@
             <span id="addPicked" class="muted"></span>
           </div>
           <div class="form-line">
+            <label class="inline">Agent <select id="addAgent"></select></label>
+            <span class="muted">Which OpenClaw agent this character talks to. You can change it later.</span>
+          </div>
+          <div class="form-line">
             <button id="addConfirm" class="primary" disabled>Add</button>
             <button id="addCancel">Cancel</button>
             <span class="muted">One idle image is enough. PNG, WebP, GIF, JPG or SVG.</span>
           </div>
+        </div>
+        <div class="row">
+          <div class="row-text"><strong>Agent</strong><span class="muted" id="agentHint">The OpenClaw agent this character's quick chat talks to.</span></div>
+          <select id="agentSelect"></select>
         </div>
         <div class="row">
           <div class="row-text"><strong>Size</strong><span class="muted" id="sizeLabel">160 px</span></div>
@@ -70,7 +78,7 @@
             <button id="revealBtn">Show files</button>
           </div>
         </div>
-        <h3>Assets <span class="muted">— drop an image on a row, or click Change</span></h3>
+        <h3>Assets <span class="muted">— several images per state; one is picked at random each time the state starts. Drop images on a row or click Add.</span></h3>
         <div id="assets" class="assets"></div>
       </section>
 

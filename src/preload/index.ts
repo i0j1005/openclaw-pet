@@ -2,6 +2,7 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { IPC } from "../shared/types";
 import type {
+  AgentOption,
   Character,
   ChatStatusUpdate,
   ConnectionInfo,
@@ -28,13 +29,16 @@ const api = {
   },
   characters: {
     list: (): Promise<Character[]> => ipcRenderer.invoke(IPC.getCharacters),
-    add: (name: string, imagePath: string): Promise<Character> => ipcRenderer.invoke(IPC.addCharacter, name, imagePath),
+    add: (name: string, imagePath: string, agentId?: string): Promise<Character> => ipcRenderer.invoke(IPC.addCharacter, name, imagePath, agentId),
     rename: (id: string, name: string): Promise<Character> => ipcRenderer.invoke(IPC.renameCharacter, id, name),
     delete: (id: string): Promise<void> => ipcRenderer.invoke(IPC.deleteCharacter, id),
     duplicate: (id: string): Promise<Character> => ipcRenderer.invoke(IPC.duplicateCharacter, id),
-    setAsset: (id: string, state: PetState, imagePath: string): Promise<Character> =>
-      ipcRenderer.invoke(IPC.setCharacterAsset, id, state, imagePath),
-    setAssetFromFile: async (id: string, state: PetState, file: File): Promise<Character> => {
+    /** Binds the character to one OpenClaw agent; null = any agent (most recent session). */
+    setAgent: (id: string, agentId: string | null): Promise<Character> => ipcRenderer.invoke(IPC.setCharacterAgent, id, agentId),
+    /** Appends one image to the state's variants. */
+    addAssetVariant: (id: string, state: PetState, imagePath: string): Promise<Character> =>
+      ipcRenderer.invoke(IPC.addCharacterAssetVariant, id, state, imagePath),
+    addAssetVariantFromFile: async (id: string, state: PetState, file: File): Promise<Character> => {
       // Dropped files: prefer the real path (zero-copy), fall back to bytes.
       let path = "";
       try {
@@ -42,11 +46,13 @@ const api = {
       } catch {
         path = "";
       }
-      if (path) return ipcRenderer.invoke(IPC.setCharacterAsset, id, state, path);
+      if (path) return ipcRenderer.invoke(IPC.addCharacterAssetVariant, id, state, path);
       const bytes = new Uint8Array(await file.arrayBuffer());
-      return ipcRenderer.invoke(IPC.setCharacterAssetFromPath, id, state, file.name, bytes);
+      return ipcRenderer.invoke(IPC.addCharacterAssetVariantFromBytes, id, state, file.name, bytes);
     },
-    clearAsset: (id: string, state: PetState): Promise<Character> => ipcRenderer.invoke(IPC.clearCharacterAsset, id, state),
+    /** Removes the variant at `index` (idle keeps at least one). */
+    removeAssetVariant: (id: string, state: PetState, index: number): Promise<Character> =>
+      ipcRenderer.invoke(IPC.removeCharacterAssetVariant, id, state, index),
     reveal: (id: string): Promise<void> => ipcRenderer.invoke(IPC.revealCharacter, id),
     importFolder: (): Promise<Character | null> => ipcRenderer.invoke(IPC.importCharacterFolder),
     onChange: (l: Listener<Character[]>) => on(IPC.charactersChanged, l),
@@ -57,6 +63,8 @@ const api = {
   openclaw: {
     getConnection: (): Promise<ConnectionInfo> => ipcRenderer.invoke(IPC.getConnection),
     onConnection: (l: Listener<ConnectionInfo>) => on(IPC.connectionChanged, l),
+    /** Agent roster from the gateway (metadata-only, no tokens). Empty when not connected. */
+    listAgents: (): Promise<AgentOption[]> => ipcRenderer.invoke(IPC.listAgents),
     getSnapshot: (): Promise<PetSnapshot> => ipcRenderer.invoke(IPC.getSnapshot),
     onSnapshot: (l: Listener<PetSnapshot>) => on(IPC.snapshot, l),
     sendQuickChat: (text: string): Promise<QuickChatResult> => ipcRenderer.invoke(IPC.sendQuickChat, text),

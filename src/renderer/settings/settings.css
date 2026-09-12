@@ -45,19 +45,35 @@ input[type="range"] { width: 240px; accent-color: var(--accent); }
 .form-line:last-child { margin-bottom: 0; }
 .assets { display: grid; grid-template-columns: 1fr; gap: 6px; }
 .asset {
-  display: grid; grid-template-columns: 56px 1fr auto; gap: 12px; align-items: center;
+  display: grid; grid-template-columns: minmax(150px, 220px) 1fr; gap: 12px; align-items: center;
   padding: 6px 8px; border: 1px dashed transparent; border-radius: 10px; background: var(--bg);
 }
 .asset.dragover { border-color: var(--accent); background: var(--accent-soft); }
-.asset .thumb {
-  width: 56px; height: 56px; border-radius: 8px; background: repeating-conic-gradient(#0000 0 25%, #8882 0 50%) 0 0 / 14px 14px;
-  display: flex; align-items: center; justify-content: center; overflow: hidden;
-}
-.asset .thumb img { max-width: 100%; max-height: 100%; }
-.asset .thumb.empty { opacity: 0.55; font-size: 11px; color: var(--muted); }
 .asset .name { font-weight: 600; }
+.asset .name .count { font-weight: 400; margin-left: 6px; }
 .asset .fallback { color: var(--muted); font-size: 12px; }
-.asset .actions { display: flex; gap: 6px; }
+.variants { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.variant {
+  position: relative; width: 52px; height: 52px; border-radius: 8px; overflow: hidden; flex: none;
+  background: repeating-conic-gradient(#0000 0 25%, #8882 0 50%) 0 0 / 13px 13px;
+  display: flex; align-items: center; justify-content: center;
+}
+.variant img { max-width: 100%; max-height: 100%; display: block; }
+.variant.ghost { opacity: 0.4; }
+.variant .remove {
+  position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; padding: 0; line-height: 16px;
+  border-radius: 50%; font-size: 13px; background: rgba(0,0,0,0.6); color: #fff; border: 0; opacity: 0;
+}
+.variant:hover .remove { opacity: 1; }
+.variant .remove:disabled { display: none; }
+.variant.add {
+  flex-direction: column; gap: 0; background: transparent; border: 1px dashed var(--line); color: var(--muted);
+  font-size: 16px; line-height: 1; padding: 0; cursor: pointer;
+}
+.variant.add span { font-size: 10px; }
+.variant.add:hover { border-color: var(--accent); color: var(--accent); }
+label.inline { display: inline-flex; align-items: center; gap: 8px; }
+label.inline select { min-width: 220px; }
 .grid-rows { display: grid; gap: 4px; }
 .mrow {
   display: grid; grid-template-columns: 84px 42px 1fr 1fr; gap: 12px; align-items: center;

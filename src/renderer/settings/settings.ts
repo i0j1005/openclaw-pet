@@ -9,6 +9,7 @@ import {
   STATE_FALLBACKS,
   STATE_HINTS,
   STATE_LABELS,
+  type AgentOption,
   type AmbientState,
   type Character,
   type ConnectionInfo,
@@ -23,6 +24,9 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 
 let settings: Settings;
 let characters: Character[] = [];
+/** Agent roster from the gateway; null until fetched (or while OpenClaw is off). */
+let agents: AgentOption[] | null = null;
+let connected = false;
 
 // ---- helpers --------------------------------------------------------------------
 
@@ -96,6 +100,57 @@ function renderConnection(info: ConnectionInfo): void {
     target.hidden = false;
     target.textContent = `Quick chat continues: ${info.targetSession.label}${info.targetSession.agentId ? ` (agent ${info.targetSession.agentId})` : ""}`;
   } else target.hidden = true;
+  const wasConnected = connected;
+  connected = info.status === "connected";
+  if (connected && (!wasConnected || agents === null)) void refreshAgents();
+  else if (!connected) renderAgentSelects();
+}
+
+// ---- agents ----------------------------------------------------------------------
+
+async function refreshAgents(): Promise<void> {
+  const list = await api.openclaw.listAgents();
+  agents = list;
+  renderAgentSelects();
+}
+
+const ANY_AGENT = "";
+
+/** Options for an agent picker: "Any", the roster, and the bound id even if it is not (yet) in the roster. */
+function fillAgentSelect(select: HTMLSelectElement, selected: string | undefined): void {
+  select.innerHTML = "";
+  const any = document.createElement("option");
+  any.value = ANY_AGENT;
+  any.textContent = "Any agent (most recent session)";
+  select.appendChild(any);
+  const known = new Set<string>();
+  for (const a of agents ?? []) {
+    known.add(a.id);
+    const opt = document.createElement("option");
+    opt.value = a.id;
+    opt.textContent = `${a.emoji ? `${a.emoji} ` : ""}${a.name}${a.name !== a.id ? ` (${a.id})` : ""}${a.isDefault ? " · default" : ""}`;
+    select.appendChild(opt);
+  }
+  if (selected && !known.has(selected)) {
+    const opt = document.createElement("option");
+    opt.value = selected;
+    opt.textContent = `${selected}${connected ? " (not in the agent list)" : ""}`;
+    select.appendChild(opt);
+  }
+  select.value = selected ?? ANY_AGENT;
+}
+
+function renderAgentSelects(): void {
+  const c = current();
+  const select = $<HTMLSelectElement>("agentSelect");
+  fillAgentSelect(select, c?.agentId);
+  select.disabled = !c;
+  const hint = $("agentHint");
+  if (!connected && !agents?.length) hint.textContent = "Connect OpenClaw to list agents. Until then only the current binding is shown.";
+  else if (c?.agentId) hint.textContent = `Quick chat goes to ${c.agentId}'s most recent conversation.`;
+  else hint.textContent = "Any agent: the quick chat continues the most recent conversation, whoever it was with.";
+  const addSelect = $<HTMLSelectElement>("addAgent");
+  fillAgentSelect(addSelect, addSelect.value || undefined);
 }
 
 // Per-state ambient motion rows are built once; afterwards only their values are refreshed so a
@@ -180,8 +235,13 @@ function renderCharacterSelect(): void {
   const none = characters.length === 0;
   for (const id of ["renameBtn", "duplicateBtn", "deleteBtn", "revealBtn"]) ($(id) as HTMLButtonElement).disabled = none;
   ($("deleteBtn") as HTMLButtonElement).disabled = none || characters.length === 1;
+  renderAgentSelects();
 }
 
+/**
+ * One row per state: every variant as a thumbnail with its own remove button, an "Add" tile, and
+ * drag-and-drop that appends (drop several files at once to add several variants).
+ */
 function renderAssets(): void {
   const container = $("assets");
   container.innerHTML = "";
@@ -194,28 +254,40 @@ function renderAssets(): void {
     const row = document.createElement("div");
     row.className = "asset";
     row.dataset.state = state;
-    const own = c.assets[state];
-    const fb = own ? null : STATE_FALLBACKS[state].find((s) => c.assets[s]);
-    const shown = own ?? (fb ? c.assets[fb] : undefined);
+    const own = c.assets[state] ?? [];
+    const fb = own.length ? null : STATE_FALLBACKS[state].find((s) => c.assets[s]?.length);
+    const canRemove = state !== "idle" || own.length > 1;
     row.innerHTML = `
-      <div class="thumb ${shown ? "" : "empty"}">${shown ? `<img alt="" src="${fileUrl(shown)}">` : "none"}</div>
-      <div>
-        <div class="name">${STATE_LABELS[state]}${state === "idle" ? " <span class='muted'>(required)</span>" : ""}</div>
+      <div class="asset-head">
+        <div class="name">${STATE_LABELS[state]}${state === "idle" ? " <span class='muted'>(required)</span>" : ""}
+          <span class="count muted">${own.length ? `${own.length} image${own.length === 1 ? "" : "s"}${own.length > 1 ? ", picked at random" : ""}` : ""}</span></div>
         <div class="muted">${STATE_HINTS[state]}</div>
-        ${!own && fb ? `<div class="fallback">Using the ${STATE_LABELS[fb]} image</div>` : ""}
+        ${!own.length && fb ? `<div class="fallback">Using the ${STATE_LABELS[fb]} image${(c.assets[fb]?.length ?? 0) > 1 ? "s" : ""}</div>` : ""}
       </div>
-      <div class="actions">
-        <button class="small change">Change…</button>
-        <button class="small clear" ${own && state !== "idle" ? "" : "disabled"}>Clear</button>
+      <div class="variants">
+        ${own
+          .map(
+            (p, i) => `
+          <div class="variant" title="${escapeAttr(p.split(/[\\/]/).pop() ?? "")}">
+            <img alt="" src="${fileUrl(p)}">
+            <button class="remove" data-index="${i}" title="Remove this image" aria-label="Remove ${STATE_LABELS[state]} image ${i + 1}" ${canRemove ? "" : "disabled"}>×</button>
+          </div>`,
+          )
+          .join("")}
+        ${!own.length && fb ? `<div class="variant ghost" title="Fallback"><img alt="" src="${fileUrl(c.assets[fb]![0])}"></div>` : ""}
+        <button class="variant add" title="Add an image (or drop files on this row)">＋<span>Add</span></button>
       </div>`;
-    row.querySelector<HTMLButtonElement>(".change")!.addEventListener("click", async () => {
+    row.querySelector<HTMLButtonElement>(".add")!.addEventListener("click", async () => {
       const path = await api.dialog.pickImage();
       if (!path) return;
-      await guard(() => api.characters.setAsset(c.id, state, path), `${STATE_LABELS[state]} image updated`);
+      await guard(() => api.characters.addAssetVariant(c.id, state, path), `${STATE_LABELS[state]}: image added`);
     });
-    row.querySelector<HTMLButtonElement>(".clear")!.addEventListener("click", async () => {
-      await guard(() => api.characters.clearAsset(c.id, state), `${STATE_LABELS[state]} image cleared`);
-    });
+    for (const btn of row.querySelectorAll<HTMLButtonElement>(".remove")) {
+      btn.addEventListener("click", async () => {
+        const index = Number(btn.dataset.index);
+        await guard(() => api.characters.removeAssetVariant(c.id, state, index), `${STATE_LABELS[state]}: image removed`);
+      });
+    }
     row.addEventListener("dragover", (e) => {
       e.preventDefault();
       row.classList.add("dragover");
@@ -224,12 +296,21 @@ function renderAssets(): void {
     row.addEventListener("drop", async (e) => {
       e.preventDefault();
       row.classList.remove("dragover");
-      const file = e.dataTransfer?.files?.[0];
-      if (!file) return;
-      await guard(() => api.characters.setAssetFromFile(c.id, state, file), `${STATE_LABELS[state]} image updated`);
+      const files = Array.from(e.dataTransfer?.files ?? []);
+      if (!files.length) return;
+      let added = 0;
+      for (const file of files) {
+        const r = await guard(() => api.characters.addAssetVariantFromFile(c.id, state, file));
+        if (r) added += 1;
+      }
+      if (added) toast(`${STATE_LABELS[state]}: ${added} image${added === 1 ? "" : "s"} added`);
     });
     container.appendChild(row);
   }
+}
+
+function escapeAttr(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 }
 
 async function guard<T>(fn: () => Promise<T>, okMessage?: string): Promise<T | undefined> {
@@ -263,11 +344,18 @@ $("bubbleReset").addEventListener("click", async () => {
 $<HTMLSelectElement>("characterSelect").addEventListener("change", (e) => {
   void save({ characterId: (e.target as HTMLSelectElement).value });
 });
+$<HTMLSelectElement>("agentSelect").addEventListener("change", async (e) => {
+  const c = current();
+  if (!c) return;
+  const agentId = (e.target as HTMLSelectElement).value || null;
+  await guard(() => api.characters.setAgent(c.id, agentId), agentId ? `${c.name} now talks to ${agentId}` : `${c.name} follows the most recent session`);
+});
 
-// Add character flow: name → image → done.
+// Add character flow: name → image → (agent) → done.
 let pickedImage: string | null = null;
 $("addBtn").addEventListener("click", () => {
   $("addForm").hidden = false;
+  if (connected) void refreshAgents();
   $<HTMLInputElement>("addName").focus();
 });
 $("addCancel").addEventListener("click", () => {
@@ -284,10 +372,12 @@ $("addPick").addEventListener("click", async () => {
 $("addConfirm").addEventListener("click", async () => {
   const name = $<HTMLInputElement>("addName").value.trim() || "Character";
   if (!pickedImage) return;
-  const c = await guard(() => api.characters.add(name, pickedImage!), `${name} added`);
+  const agentId = $<HTMLSelectElement>("addAgent").value || undefined;
+  const c = await guard(() => api.characters.add(name, pickedImage!, agentId), `${name} added`);
   if (c) {
     $("addForm").hidden = true;
     $<HTMLInputElement>("addName").value = "";
+    $<HTMLSelectElement>("addAgent").value = ANY_AGENT;
     pickedImage = null;
     $("addPicked").textContent = "";
     ($("addConfirm") as HTMLButtonElement).disabled = true;

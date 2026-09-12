@@ -73,6 +73,13 @@ const targets = [
     format: "esm",
     target: "node22",
   },
+  {
+    entryPoints: [join(root, "src/main/characters.ts")],
+    outfile: join(out, "tests/characters.js"),
+    platform: "node",
+    format: "esm",
+    target: "node22",
+  },
 ];
 
 function copyStatic() {

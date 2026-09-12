@@ -178,6 +178,12 @@ function applyControllerSettings(s: Settings): void {
     reactionsEnabled: s.reactionsEnabled,
     reactionHoldMs: s.reactionHoldMs,
   });
+  applyTargetAgent(s);
+}
+
+/** The quick chat follows the active character's agent binding (none = most recent session of any agent). */
+function applyTargetAgent(s: Settings = settingsStore.get()): void {
+  controller.setTargetAgent(characters.get(s.characterId)?.agentId ?? null);
 }
 
 function applyLoginItem(enabled: boolean): void {
@@ -292,8 +298,8 @@ function registerIpc(): void {
   ipcMain.handle(IPC.updateSettings, (_e, patch: SettingsPatch) => applySettings(patch));
 
   ipcMain.handle(IPC.getCharacters, () => characters.list());
-  ipcMain.handle(IPC.addCharacter, (_e, name: string, imagePath: string) => {
-    const c = characters.add(name, imagePath);
+  ipcMain.handle(IPC.addCharacter, (_e, name: string, imagePath: string, agentId?: string) => {
+    const c = characters.add(name, imagePath, agentId);
     applySettings({ characterId: c.id });
     broadcast(IPC.charactersChanged, characters.list());
     return c;
@@ -314,18 +320,24 @@ function registerIpc(): void {
     broadcast(IPC.charactersChanged, characters.list());
     return c;
   });
-  ipcMain.handle(IPC.setCharacterAsset, (_e, id: string, state: PetState, imagePath: string) => {
-    const c = characters.setAsset(id, state, imagePath);
+  ipcMain.handle(IPC.setCharacterAgent, (_e, id: string, agentId: string | null) => {
+    const c = characters.setAgent(id, agentId);
+    broadcast(IPC.charactersChanged, characters.list());
+    applyTargetAgent();
+    return c;
+  });
+  ipcMain.handle(IPC.addCharacterAssetVariant, (_e, id: string, state: PetState, imagePath: string) => {
+    const c = characters.addAssetVariant(id, state, imagePath);
     broadcast(IPC.charactersChanged, characters.list());
     return c;
   });
-  ipcMain.handle(IPC.setCharacterAssetFromPath, (_e, id: string, state: PetState, fileName: string, bytes: Uint8Array) => {
-    const c = characters.setAssetFromBytes(id, state, fileName, bytes);
+  ipcMain.handle(IPC.addCharacterAssetVariantFromBytes, (_e, id: string, state: PetState, fileName: string, bytes: Uint8Array) => {
+    const c = characters.addAssetVariantFromBytes(id, state, fileName, bytes);
     broadcast(IPC.charactersChanged, characters.list());
     return c;
   });
-  ipcMain.handle(IPC.clearCharacterAsset, (_e, id: string, state: PetState) => {
-    const c = characters.clearAsset(id, state);
+  ipcMain.handle(IPC.removeCharacterAssetVariant, (_e, id: string, state: PetState, index: number) => {
+    const c = characters.removeAssetVariant(id, state, index);
     broadcast(IPC.charactersChanged, characters.list());
     return c;
   });
@@ -353,6 +365,7 @@ function registerIpc(): void {
   });
 
   ipcMain.handle(IPC.getConnection, () => controller.getConnection());
+  ipcMain.handle(IPC.listAgents, () => controller.listAgents());
   ipcMain.handle(IPC.getSnapshot, () => controller.getSnapshot());
   ipcMain.handle(IPC.sendQuickChat, (_e, text: string) => {
     if (process.env.OPENCLAW_PET_TEST_DRY) return fakeQuickChat(text);
