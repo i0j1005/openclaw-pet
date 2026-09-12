@@ -259,9 +259,9 @@ function renderAssets(): void {
     const canRemove = state !== "idle" || own.length > 1;
     row.innerHTML = `
       <div class="asset-head">
-        <div class="name">${STATE_LABELS[state]}${state === "idle" ? " <span class='muted'>(required)</span>" : ""}
-          <span class="count muted">${own.length ? `${own.length} image${own.length === 1 ? "" : "s"}${own.length > 1 ? ", picked at random" : ""}` : ""}</span></div>
+        <div class="name">${STATE_LABELS[state]}${state === "idle" ? " <span class='muted'>(required)</span>" : ""}</div>
         <div class="muted">${STATE_HINTS[state]}</div>
+        ${own.length > 1 ? `<div class="count">${own.length} images, one picked at random</div>` : ""}
         ${!own.length && fb ? `<div class="fallback">Using the ${STATE_LABELS[fb]} image${(c.assets[fb]?.length ?? 0) > 1 ? "s" : ""}</div>` : ""}
       </div>
       <div class="variants">

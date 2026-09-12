@@ -35,7 +35,15 @@ async function main(): Promise<void> {
     console.log("events advertised:", hello.features.events.filter((e) => ["chat", "agent", "sessions.changed", "session.observer"].includes(e)).join(", "));
     const res = await client.request<any>("sessions.list", { limit: 8, sortBy: "lastInteractionAt", requireLastInteraction: true, configuredAgentsOnly: true });
     for (const s of res?.sessions ?? []) {
-      console.log(`  session ${s.key}  kind=${s.kind ?? "?"}  active=${s.hasActiveRun ?? "?"}  last=${s.lastInteractionAt ? new Date(s.lastInteractionAt).toISOString() : "-"}`);
+      console.log(`  session ${s.key}  agent=${s.agentId ?? "?"}  kind=${s.kind ?? "?"}  active=${s.hasActiveRun ?? "?"}  last=${s.lastInteractionAt ? new Date(s.lastInteractionAt).toISOString() : "-"}`);
+    }
+    // --agents: the roster the character "Agent" dropdown shows (agents.list, metadata-only).
+    if (process.argv.includes("--agents")) {
+      const a = await client.request<any>("agents.list", {});
+      console.log(`agents (default ${a?.defaultId ?? "?"}): ${(a?.agents ?? []).length}`);
+      for (const agent of a?.agents ?? []) {
+        console.log(`  ${agent.id}  kind=${agent.kind ?? "-"}  name=${agent.identity?.name ?? agent.name ?? "-"}  emoji=${agent.identity?.emoji ?? "-"}`);
+      }
     }
     // --history=<sessionKey>: print the last few transcript entries (metadata read, no tokens).
     const historyKey = process.argv.find((a) => a.startsWith("--history="))?.split("=")[1];

@@ -98,6 +98,8 @@ function displayState(): PetState {
  * connection dot changes; re-entering the same state rolls again.
  */
 let pick: { state: PetState; owner: PetState; index: number } | null = null;
+/** Last variant shown per owning state, so the next visit to that state shows a different one. */
+let lastIndex: Partial<Record<PetState, number>> = {};
 
 function resolveAsset(state: PetState): { src: string | null; fallback: boolean } {
   if (!character) {
@@ -111,7 +113,9 @@ function resolveAsset(state: PetState): { src: string | null; fallback: boolean 
   }
   const variants = character.assets[owner]!;
   if (!pick || pick.state !== state || pick.owner !== owner || pick.index >= variants.length) {
-    pick = { state, owner, index: pickVariant(variants.length, pick?.owner === owner ? pick.index : -1) };
+    const index = pick?.owner === owner && pick.index < variants.length ? pick.index : pickVariant(variants.length, lastIndex[owner] ?? -1);
+    pick = { state, owner, index };
+    lastIndex[owner] = index;
   }
   return { src: fileUrl(variants[pick.index]), fallback: owner !== state };
 }
@@ -473,7 +477,10 @@ async function loadCharacter(): Promise<void> {
 
 /** Swapping to another character re-rolls the variant; edits to the same character keep the current one. */
 function setCharacter(next: Character | null): void {
-  if (next?.id !== character?.id) pick = null;
+  if (next?.id !== character?.id) {
+    pick = null;
+    lastIndex = {};
+  }
   character = next;
   currentSrc = "";
   render();

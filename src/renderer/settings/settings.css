@@ -50,7 +50,7 @@ input[type="range"] { width: 240px; accent-color: var(--accent); }
 }
 .asset.dragover { border-color: var(--accent); background: var(--accent-soft); }
 .asset .name { font-weight: 600; }
-.asset .name .count { font-weight: 400; margin-left: 6px; }
+.asset .count { color: var(--accent); font-size: 12px; }
 .asset .fallback { color: var(--muted); font-size: 12px; }
 .variants { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
 .variant {

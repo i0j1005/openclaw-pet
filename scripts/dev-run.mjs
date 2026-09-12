@@ -5,6 +5,7 @@
 // --send submits ONE real quick-chat message through the pet window (this starts an agent turn in the
 // owner's most recent OpenClaw session and costs tokens: use it deliberately, never in a loop).
 import { spawn, execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -28,10 +29,13 @@ const sendDry = dryIdx > 0 ? process.argv[dryIdx + 1] : null;
 const collapseIdx = process.argv.indexOf("--collapse-at");
 const collapseAt = collapseIdx > 0 ? process.argv[collapseIdx + 1] : null;
 // --eval "js" / --eval-end "js": run JS in the pet page before the first / after the last capture (result is logged).
+// --eval-file path / --eval-end-file path: same, reading the JS from a file (handy for multi-line scripts).
 const evalIdx = process.argv.indexOf("--eval");
-const evalJs = evalIdx > 0 ? process.argv[evalIdx + 1] : null;
+const evalFileIdx = process.argv.indexOf("--eval-file");
+const evalJs = evalIdx > 0 ? process.argv[evalIdx + 1] : evalFileIdx > 0 ? readFileSync(process.argv[evalFileIdx + 1], "utf8") : null;
 const evalEndIdx = process.argv.indexOf("--eval-end");
-const evalEndJs = evalEndIdx > 0 ? process.argv[evalEndIdx + 1] : null;
+const evalEndFileIdx = process.argv.indexOf("--eval-end-file");
+const evalEndJs = evalEndIdx > 0 ? process.argv[evalEndIdx + 1] : evalEndFileIdx > 0 ? readFileSync(process.argv[evalEndFileIdx + 1], "utf8") : null;
 
 // A leftover instance from an interrupted run would hold the single-instance lock and make this run exit
 // immediately, so stop any Electron main process that was started from this project first.
