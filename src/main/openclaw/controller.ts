@@ -454,6 +454,8 @@ export class OpenClawController extends EventEmitter {
    */
   private async resolveDeliveryRoute(target: SessionRow): Promise<Record<string, unknown>> {
     if (!this.client?.connected) return {};
+    // The gateway rejects explicit originating-route fields without operator.admin.
+    if (!this.client.grantedScopes.includes("operator.admin")) return {};
     try {
       const res = await this.client.request<{
         session?: {

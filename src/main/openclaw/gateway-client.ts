@@ -82,6 +82,10 @@ export class GatewayClient extends EventEmitter {
     return this.ws?.readyState === WebSocket.OPEN && this.hello !== null;
   }
 
+  get grantedScopes(): string[] {
+    return this.hello?.auth.scopes ?? [];
+  }
+
   /** Opens the socket and completes the handshake. Rejects with a GatewayError on failure. */
   connect(): Promise<HelloOk> {
     this.closedByUser = false;
@@ -217,7 +221,8 @@ export class GatewayClient extends EventEmitter {
   }
 
   private buildConnectParams(nonce: string, signedAtMs: number): Record<string, unknown> {
-    const scopes = this.opts.scopes ?? ["operator.read", "operator.write"];
+    // operator.admin is needed for chat.send originating-route fields (mirroring quick-chat replies to the chat app).
+    const scopes = this.opts.scopes ?? ["operator.read", "operator.write", "operator.admin"];
     const { platform, deviceFamily } = platformIdentity(this.opts.platform);
     const token = this.opts.token?.trim() || undefined;
     const password = this.opts.password?.trim() || undefined;
