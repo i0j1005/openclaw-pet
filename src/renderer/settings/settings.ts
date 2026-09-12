@@ -52,6 +52,7 @@ function renderSettings(): void {
   $<HTMLInputElement>("alwaysOnTop").checked = settings.alwaysOnTop;
   $<HTMLInputElement>("reactionsEnabled").checked = settings.reactionsEnabled;
   $<HTMLInputElement>("hoverChatEnabled").checked = settings.hoverChatEnabled;
+  $<HTMLInputElement>("ambientMotionEnabled").checked = settings.ambientMotionEnabled;
   $<HTMLInputElement>("size").value = String(settings.size);
   $("sizeLabel").textContent = `${settings.size} px`;
   $<HTMLInputElement>("reactionDuration").value = String(Math.round(settings.reactionDurationMs / 1000));
@@ -174,6 +175,7 @@ bindSwitch("launchAtLogin");
 bindSwitch("alwaysOnTop");
 bindSwitch("reactionsEnabled");
 bindSwitch("hoverChatEnabled");
+bindSwitch("ambientMotionEnabled");
 
 const sizeInput = $<HTMLInputElement>("size");
 sizeInput.addEventListener("input", () => ($("sizeLabel").textContent = `${sizeInput.value} px`));

@@ -113,6 +113,8 @@ export interface Settings {
   size: number;
   reactionsEnabled: boolean;
   hoverChatEnabled: boolean;
+  /** Looping idle/thinking/working motion. Off by default: it costs compositor time on an always-on-top window. */
+  ambientMotionEnabled: boolean;
   /** How long happy/error/question reactions stay visible, in ms. */
   reactionDurationMs: number;
   position?: { x: number; y: number };
@@ -127,6 +129,7 @@ export const DEFAULT_SETTINGS: Settings = {
   size: 160,
   reactionsEnabled: true,
   hoverChatEnabled: true,
+  ambientMotionEnabled: false,
   reactionDurationMs: 7000,
   gateway: { mode: "auto" },
 };

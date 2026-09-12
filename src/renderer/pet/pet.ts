@@ -95,6 +95,7 @@ function render(): void {
     fallback ? "fallback" : "",
     `conn-${snapshot.connection}`,
     settings?.openclawEnabled ? "show-dot" : "",
+    settings?.ambientMotionEnabled ? "ambient" : "",
     fallback && BADGES[state] ? "badge" : "",
     chatOpen() ? "chat-open" : "",
   ]
