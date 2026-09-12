@@ -115,6 +115,7 @@ export class OpenClawController extends EventEmitter {
     if (!this.client?.connected) return { ok: false, error: "OpenClaw is not connected." };
     const target = this.pickTargetSession();
     if (!target) return { ok: false, error: "No OpenClaw session found yet." };
+    const route = await this.resolveDeliveryRoute(target);
     const runId = randomUUID();
     this.myRunIds.add(runId);
     try {
@@ -123,6 +124,7 @@ export class OpenClawController extends EventEmitter {
         ...(target.agentId ? { agentId: target.agentId } : {}),
         message,
         idempotencyKey: runId,
+        ...route,
       });
       const actualRunId = typeof res?.runId === "string" ? res.runId : runId;
       if (actualRunId !== runId) {
@@ -442,6 +444,43 @@ export class OpenClawController extends EventEmitter {
       return { key: `agent:${agentId}:main`, agentId };
     }
     return best;
+  }
+
+  /**
+   * A quick chat should feel like one continuous conversation with the user's chat app, so the reply
+   * is also delivered to the session's stored route (e.g. the Discord DM). Without an explicit route
+   * the gateway keeps webchat-style replies internal and never mirrors them to a channel.
+   * `sessions.describe` is metadata-only (no tokens).
+   */
+  private async resolveDeliveryRoute(target: SessionRow): Promise<Record<string, unknown>> {
+    if (!this.client?.connected) return {};
+    try {
+      const res = await this.client.request<{
+        session?: {
+          deliveryContext?: { channel?: string; to?: string; accountId?: string; threadId?: string };
+          lastChannel?: string;
+          lastTo?: string;
+          lastAccountId?: string;
+          origin?: { provider?: string; to?: string; accountId?: string; threadId?: string };
+        };
+      }>("sessions.describe", { key: target.key, ...(target.agentId ? { agentId: target.agentId } : {}) });
+      const s = res?.session;
+      const channel = s?.deliveryContext?.channel ?? s?.lastChannel ?? s?.origin?.provider;
+      const to = s?.deliveryContext?.to ?? s?.lastTo ?? s?.origin?.to;
+      const accountId = s?.deliveryContext?.accountId ?? s?.lastAccountId ?? s?.origin?.accountId;
+      const threadId = s?.deliveryContext?.threadId ?? s?.origin?.threadId;
+      if (!channel || !to || channel === "webchat") return {};
+      return {
+        deliver: true,
+        originatingChannel: channel,
+        originatingTo: to,
+        ...(accountId ? { originatingAccountId: accountId } : {}),
+        ...(threadId ? { originatingThreadId: threadId } : {}),
+      };
+    } catch (err) {
+      this.opts.log?.(`sessions.describe failed, sending without a delivery route: ${(err as Error).message}`);
+      return {};
+    }
   }
 
   private describeTargetSession(): ConnectionInfo["targetSession"] {
