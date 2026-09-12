@@ -8,6 +8,10 @@ files:
   - package.json
 asar: true
 compression: maximum
+# Drop the ~55 Chromium locale bundles we do not use (the UI is English with Korean-friendly fonts).
+electronLanguages:
+  - en
+  - ko
 mac:
   category: public.app-category.utilities
   target:

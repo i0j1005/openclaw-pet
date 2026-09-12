@@ -422,12 +422,16 @@ export class OpenClawController extends EventEmitter {
     return IGNORED_SESSION_FRAGMENTS.some((f) => key.includes(f));
   }
 
-  /** "Most recent session the user was using": highest lastInteractionAt, ignoring automation rows. */
+  /**
+   * "Most recent session the user was using": highest lastInteractionAt among the user's own
+   * conversations. Automation rows and shared group/channel rooms are skipped: a quick chat from the
+   * desktop belongs in the personal (main/direct) conversation, not in someone's Discord channel.
+   */
   private pickTargetSession(): SessionRow | null {
     let best: SessionRow | null = null;
     for (const row of this.sessions.values()) {
       if (this.isIgnoredSession(row.key)) continue;
-      if (row.kind && ["cron", "hook", "heartbeat", "subagent"].includes(row.kind)) continue;
+      if (row.kind && !["direct", "main", "thread"].includes(row.kind)) continue;
       const t = row.lastInteractionAt ?? row.updatedAt ?? 0;
       const bestT = best ? (best.lastInteractionAt ?? best.updatedAt ?? 0) : -1;
       if (t > bestT) best = row;
@@ -444,8 +448,10 @@ export class OpenClawController extends EventEmitter {
     if (this.connection.status !== "connected") return undefined;
     const s = this.pickTargetSession();
     if (!s) return undefined;
-    const label = s.label || s.displayName || s.derivedTitle || (s.key.endsWith(":main") ? "Main session" : s.key.split(":").slice(-1)[0]);
-    return { key: s.key, label, agentId: s.agentId };
+    const isMain = /^agent:[^:]+:main$/.test(s.key);
+    const title = s.derivedTitle || s.displayName || (isMain ? "" : s.label) || "";
+    const label = isMain ? `Main conversation${title ? ` · ${title}` : ""}` : title || s.key.split(":").slice(-2).join(" ");
+    return { key: s.key, label: truncate(label, 80), agentId: s.agentId };
   }
 
   private setConnection(info: ConnectionInfo): void {

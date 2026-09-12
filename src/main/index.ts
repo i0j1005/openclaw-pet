@@ -87,6 +87,7 @@ async function main(): Promise<void> {
   applyControllerSettings(settingsStore.get());
   applyLoginItem(settingsStore.get().launchAtLogin);
   tray.update({ enabled: settingsStore.get().openclawEnabled, connection: controller.getConnection() });
+  scheduleDebugCapture();
 
   app.on("activate", () => petWindow?.show());
   app.on("before-quit", () => {
@@ -157,11 +158,38 @@ function applyControllerSettings(s: Settings): void {
 }
 
 function applyLoginItem(enabled: boolean): void {
+  // macOS only accepts login items from a bundled .app; skip silently in `electron .` dev runs.
+  if (!app.isPackaged) {
+    log(`launch at login = ${enabled} (ignored in dev mode)`);
+    return;
+  }
   try {
-    app.setLoginItemSettings({ openAtLogin: enabled });
+    const current = app.getLoginItemSettings().openAtLogin;
+    if (current !== enabled) app.setLoginItemSettings({ openAtLogin: enabled });
   } catch (err) {
     log(`setLoginItemSettings failed: ${(err as Error).message}`);
   }
+}
+
+/** Debug aid: OPENCLAW_PET_CAPTURE=/dir writes PNGs of both windows a few seconds after launch. */
+function scheduleDebugCapture(): void {
+  const dir = process.env.OPENCLAW_PET_CAPTURE;
+  if (!dir) return;
+  openSettings();
+  setTimeout(async () => {
+    const { writeFileSync, mkdirSync } = await import("node:fs");
+    mkdirSync(dir, { recursive: true });
+    for (const [name, win] of [
+      ["pet", petWindow],
+      ["settings", settingsWindow],
+    ] as const) {
+      if (!win || win.isDestroyed()) continue;
+      const image = await win.webContents.capturePage();
+      writeFileSync(join(dir, `${name}.png`), image.toPNG());
+      const state = await win.webContents.executeJavaScript("document.getElementById('stage')?.className ?? document.title").catch(() => "?");
+      log(`captured ${name} → ${join(dir, `${name}.png`)} [${state}]`);
+    }
+  }, 5000);
 }
 
 function applySettings(patch: Partial<Settings>): Settings {
