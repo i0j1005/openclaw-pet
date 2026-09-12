@@ -27,6 +27,25 @@ const sendDry = dryIdx > 0 ? process.argv[dryIdx + 1] : null;
 // --collapse-at N: click the bubble right before pet-N.png so the collapsed pill gets captured.
 const collapseIdx = process.argv.indexOf("--collapse-at");
 const collapseAt = collapseIdx > 0 ? process.argv[collapseIdx + 1] : null;
+// --eval "js" / --eval-end "js": run JS in the pet page before the first / after the last capture (result is logged).
+const evalIdx = process.argv.indexOf("--eval");
+const evalJs = evalIdx > 0 ? process.argv[evalIdx + 1] : null;
+const evalEndIdx = process.argv.indexOf("--eval-end");
+const evalEndJs = evalEndIdx > 0 ? process.argv[evalEndIdx + 1] : null;
+
+// A leftover instance from an interrupted run would hold the single-instance lock and make this run exit
+// immediately, so stop any Electron main process that was started from this project first.
+if (process.platform !== "win32") {
+  try {
+    const out = execFileSync("pgrep", ["-f", `${root}/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron`]).toString();
+    for (const pid of out.split("\n").map((l) => Number(l.trim())).filter((n) => Number.isFinite(n) && n > 0 && n !== process.pid)) {
+      try {
+        process.kill(pid, "SIGKILL");
+        console.log(`[dev-run] stopped leftover Electron process ${pid}`);
+      } catch {}
+    }
+  } catch {}
+}
 
 const child = spawn(electron, [root], {
   cwd: root,
@@ -38,6 +57,9 @@ const child = spawn(electron, [root], {
     ...(send ? { OPENCLAW_PET_TEST_MESSAGE: send } : {}),
     ...(sendDry ? { OPENCLAW_PET_TEST_MESSAGE: sendDry, OPENCLAW_PET_TEST_DRY: "1" } : {}),
     ...(collapseAt ? { OPENCLAW_PET_CAPTURE_COLLAPSE_AT: collapseAt } : {}),
+    ...(evalJs ? { OPENCLAW_PET_CAPTURE_EVAL: evalJs } : {}),
+    ...(evalEndJs ? { OPENCLAW_PET_CAPTURE_EVAL_END: evalEndJs } : {}),
+    ...(process.argv.includes("--payloads") ? { OPENCLAW_PET_DEBUG_PAYLOADS: "1" } : {}),
   },
   stdio: ["ignore", "pipe", "pipe"],
 });

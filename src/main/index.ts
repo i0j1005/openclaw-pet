@@ -233,7 +233,14 @@ function scheduleDebugCapture(): void {
     await settingsWindow.webContents.executeJavaScript(`document.querySelector(${JSON.stringify(selector)})?.scrollIntoView({ block: "start" })`).catch(() => undefined);
     await new Promise((r) => setTimeout(r, 300));
   };
+  // OPENCLAW_PET_CAPTURE_EVAL / _EVAL_END: JS run in the pet page before the first / after the last shot.
+  const evalInPet = async (label: string, code: string | undefined) => {
+    if (!code || !petWindow || petWindow.isDestroyed()) return;
+    const r = await petWindow.webContents.executeJavaScript(code).catch((e) => `error: ${e}`);
+    log(`debug eval (${label}): ${typeof r === "string" ? r : JSON.stringify(r)}`);
+  };
   setTimeout(async () => {
+    await evalInPet("start", process.env.OPENCLAW_PET_CAPTURE_EVAL);
     await snap("pet", petWindow);
     await snap("settings", settingsWindow);
     await scrollSettingsTo("#assets");
@@ -256,6 +263,7 @@ function scheduleDebugCapture(): void {
       }
       await snap(`pet-${i}`, petWindow);
     }
+    await evalInPet("end", process.env.OPENCLAW_PET_CAPTURE_EVAL_END);
   }, 5000);
 }
 

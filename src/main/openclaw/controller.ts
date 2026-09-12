@@ -69,6 +69,10 @@ export class OpenClawController extends EventEmitter {
   private runs = new Map<string, ActiveRun>();
   private sessions = new Map<string, SessionRow>();
   private myRunIds = new Set<string>();
+  /** Sessions the gateway reports as running (sessions.changed / user transcript entries), keyed by session. */
+  private activeSessions = new Map<string, number>();
+  private subscribedKey: string | null = null;
+  private lastReplyKey = "";
   private lastReply?: { text: string; at: number };
   private reaction: ReactionState = null;
   private reactionSetAt = 0;
@@ -122,6 +126,7 @@ export class OpenClawController extends EventEmitter {
     if (!this.client?.connected) return { ok: false, error: "OpenClaw is not connected." };
     const target = this.pickTargetSession();
     if (!target) return { ok: false, error: "No OpenClaw session found yet." };
+    await this.syncMessageSubscription();
     const route = await this.resolveDeliveryRoute(target);
     const runId = randomUUID();
     this.myRunIds.add(runId);
@@ -133,12 +138,15 @@ export class OpenClawController extends EventEmitter {
         idempotencyKey: runId,
         ...route,
       });
+      this.opts.log?.(`chat.send → ${JSON.stringify(res).slice(0, 300)}`);
       const actualRunId = typeof res?.runId === "string" ? res.runId : runId;
       if (actualRunId !== runId) {
         this.myRunIds.delete(runId);
         this.myRunIds.add(actualRunId);
       }
+      this.activeSessions.set(target.key, Date.now());
       this.emitChatStatus({ runId: actualRunId, phase: "sent" });
+      this.emitSnapshot();
       return { ok: true, runId: actualRunId };
     } catch (err) {
       this.myRunIds.delete(runId);
@@ -168,6 +176,8 @@ export class OpenClawController extends EventEmitter {
     client?.removeAllListeners();
     client?.close();
     this.runs.clear();
+    this.activeSessions.clear();
+    this.subscribedKey = null;
     this.setReaction(null);
     if (emitOff) this.setConnection({ status: "off" });
     this.emitSnapshot();
@@ -213,6 +223,8 @@ export class OpenClawController extends EventEmitter {
     client.on("disconnected", ({ byUser, reason }: { byUser: boolean; reason: string }) => {
       if (gen !== this.generation || byUser) return;
       this.runs.clear();
+      this.activeSessions.clear();
+      this.subscribedKey = null;
       this.opts.log?.(`disconnected: ${reason}`);
       this.setConnection({ status: "reconnecting", hint: "OpenClaw went away. Reconnecting…", gatewayUrl: endpoint.url });
       this.emitSnapshot();
@@ -272,16 +284,50 @@ export class OpenClawController extends EventEmitter {
       }
     }
     this.emit("connection", this.getConnection());
+    await this.syncMessageSubscription();
+  }
+
+  /**
+   * Transcript events (`session.message`) are the one reply source that does not depend on how a run
+   * was executed (embedded runner, Claude CLI runtime, restart recovery…), so the pet subscribes to
+   * them for the session the quick chat targets. Metadata-only, no tokens.
+   */
+  private async syncMessageSubscription(): Promise<void> {
+    const client = this.client;
+    if (!client?.connected) return;
+    const target = this.pickTargetSession();
+    if (!target || target.key === this.subscribedKey) return;
+    const previous = this.subscribedKey;
+    this.subscribedKey = target.key;
+    try {
+      if (previous) await client.request("sessions.messages.unsubscribe", { key: previous }).catch(() => undefined);
+      await client.request("sessions.messages.subscribe", { key: target.key, ...(target.agentId ? { agentId: target.agentId } : {}) });
+      this.opts.log?.(`subscribed to messages of ${target.key}`);
+    } catch (err) {
+      this.subscribedKey = null;
+      this.opts.log?.(`sessions.messages.subscribe failed: ${(err as Error).message}`);
+    }
   }
 
   // ---- events → state -------------------------------------------------------
 
   private handleEvent(event: string, payload: any): void {
+    if (event !== "tick" && event !== "presence" && event !== "health") {
+      this.opts.log?.(
+        `event ${event}${payload?.state ? ` state=${payload.state}` : ""}${payload?.stream ? ` stream=${payload.stream}` : ""}${payload?.sessionKey ? ` session=${payload.sessionKey}` : ""}${payload?.runId ? ` run=${String(payload.runId).slice(0, 8)}` : ""}${process.env.OPENCLAW_PET_DEBUG_PAYLOADS ? ` ${JSON.stringify(payload).slice(0, 600)}` : ""}`,
+      );
+    }
     switch (event) {
       case "chat":
         this.handleChatEvent(payload);
         break;
       case "agent":
+        this.handleAgentEvent(payload);
+        break;
+      case "session.message":
+        this.handleSessionMessage(payload);
+        break;
+      case "session.tool":
         this.handleAgentEvent(payload);
         break;
       case "session.observer":
@@ -316,15 +362,18 @@ export class OpenClawController extends EventEmitter {
       case "error":
       case "aborted": {
         if (this.runs.delete(p.runId)) this.opts.log?.(`run ${p.runId.slice(0, 8)} ${p.state} (${p.sessionKey})`);
+        this.activeSessions.delete(p.sessionKey);
         const text = extractMessageText(p.message);
-        if (p.state === "final" && text) this.lastReply = { text: truncate(text, 280), at: Date.now() };
-        const reaction = classifyOutcome({ state: p.state, text, errorKind: p.errorKind });
-        this.setReaction(reaction);
-        if (mine) {
-          this.myRunIds.delete(p.runId);
-          if (p.state === "final") this.emitChatStatus({ runId: p.runId, phase: "reply", text: truncate(text, 280) });
-          else if (p.state === "error") this.emitChatStatus({ runId: p.runId, phase: "error", text: friendlyRunError(p) });
-          else this.emitChatStatus({ runId: p.runId, phase: "aborted" });
+        if (p.state === "final") {
+          // A final without text (slash commands, some runtimes) is completed by the session.message event.
+          if (text) this.applyReply(p.sessionKey, text, p.runId);
+        } else {
+          this.setReaction(classifyOutcome({ state: p.state, text, errorKind: p.errorKind }));
+          if (mine) {
+            this.myRunIds.delete(p.runId);
+            if (p.state === "error") this.emitChatStatus({ runId: p.runId, phase: "error", text: friendlyRunError(p) });
+            else this.emitChatStatus({ runId: p.runId, phase: "aborted" });
+          }
         }
         break;
       }
@@ -369,6 +418,44 @@ export class OpenClawController extends EventEmitter {
     this.emitSnapshot();
   }
 
+  /** Transcript update for a subscribed session: the authoritative reply text, whatever runtime produced it. */
+  private handleSessionMessage(p: any): void {
+    if (!p || typeof p.sessionKey !== "string" || !p.message || typeof p.message !== "object") return;
+    if (this.isIgnoredSession(p.sessionKey)) return;
+    const role = p.message.role;
+    if (role === "user") {
+      // Someone (maybe us) just asked something: a run is about to start.
+      this.activeSessions.set(p.sessionKey, Date.now());
+      this.emitSnapshot();
+      return;
+    }
+    if (role !== "assistant") return;
+    const text = extractMessageText(p.message);
+    if (!text.trim()) return;
+    const runId = typeof p.runId === "string" ? p.runId : typeof p.message.idempotencyKey === "string" ? p.message.idempotencyKey.split(":")[0] : undefined;
+    for (const [id, run] of this.runs) if (run.sessionKey === p.sessionKey) this.runs.delete(id);
+    this.activeSessions.delete(p.sessionKey);
+    this.applyReply(p.sessionKey, text, runId);
+  }
+
+  /** Records a finished reply once (chat final and session.message can both carry it) and reacts to it. */
+  private applyReply(sessionKey: string, text: string, runId?: string): void {
+    const key = `${sessionKey}|${text.slice(0, 200)}`;
+    if (key === this.lastReplyKey) return;
+    this.lastReplyKey = key;
+    const short = truncate(text, 280);
+    this.lastReply = { text: short, at: Date.now() };
+    this.setReaction(classifyOutcome({ state: "final", text }));
+    // The pet's own quick chat: deliver the reply to the bubble. The run id of the transcript entry can differ
+    // from the chat.send id (runtime resumes, recovery runs), so any pending quick chat on this session counts.
+    const pending = runId && this.myRunIds.has(runId) ? runId : this.myRunIds.size ? [...this.myRunIds][0] : null;
+    if (pending) {
+      this.myRunIds.clear();
+      this.emitChatStatus({ runId: pending, phase: "reply", text: short });
+    }
+    this.emitSnapshot();
+  }
+
   private handleObserver(p: any): void {
     if (!p || typeof p.health !== "string" || typeof p.runId !== "string") return;
     if (!this.runs.has(p.runId)) return;
@@ -377,9 +464,25 @@ export class OpenClawController extends EventEmitter {
   }
 
   private handleSessionsChanged(p: any): void {
-    const rows: SessionRow[] = Array.isArray(p?.sessions) ? p.sessions : p?.session ? [p.session] : p?.key ? [p] : [];
-    for (const row of rows) if (row && typeof row.key === "string") this.rememberSession(row);
-    if (rows.length) this.emit("connection", this.getConnection());
+    const raw: any[] = Array.isArray(p?.sessions) ? p.sessions : p?.session ? [p.session] : p ? [p] : [];
+    const rows: SessionRow[] = [];
+    for (const r of raw) {
+      if (!r || typeof r !== "object") continue;
+      const key = typeof r.key === "string" ? r.key : typeof r.sessionKey === "string" ? r.sessionKey : null;
+      if (!key) continue;
+      const row: SessionRow = { ...r, key };
+      rows.push(row);
+      this.rememberSession(row);
+      if (this.isIgnoredSession(key)) continue;
+      // `hasActiveRun` is the gateway's authoritative activity fact; the reason strings are the cheap live hint.
+      if (row.hasActiveRun === true || r.reason === "chat.run.started") this.activeSessions.set(key, Date.now());
+      else if (row.hasActiveRun === false || r.reason === "chat.run.settled" || r.reason === "chat.run.aborted") this.activeSessions.delete(key);
+    }
+    if (rows.length) {
+      this.emit("connection", this.getConnection());
+      this.emitSnapshot();
+      void this.syncMessageSubscription();
+    }
   }
 
   // ---- helpers --------------------------------------------------------------
@@ -397,13 +500,14 @@ export class OpenClawController extends EventEmitter {
   private pruneStaleRuns(): void {
     const now = Date.now();
     for (const [id, run] of this.runs) if (now - run.startedAt > STALE_RUN_MS) this.runs.delete(id);
+    for (const [key, at] of this.activeSessions) if (now - at > STALE_RUN_MS) this.activeSessions.delete(key);
   }
 
   private activity(): ActivityState {
     this.pruneStaleRuns();
-    if (this.runs.size === 0) return "idle";
     for (const run of this.runs.values()) if (run.toolsRunning > 0) return "working";
-    return "thinking";
+    if (this.runs.size > 0 || this.activeSessions.size > 0) return "thinking";
+    return "idle";
   }
 
   private setReaction(reaction: ReactionState): void {

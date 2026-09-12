@@ -37,6 +37,17 @@ async function main(): Promise<void> {
     for (const s of res?.sessions ?? []) {
       console.log(`  session ${s.key}  kind=${s.kind ?? "?"}  active=${s.hasActiveRun ?? "?"}  last=${s.lastInteractionAt ? new Date(s.lastInteractionAt).toISOString() : "-"}`);
     }
+    // --history=<sessionKey>: print the last few transcript entries (metadata read, no tokens).
+    const historyKey = process.argv.find((a) => a.startsWith("--history="))?.split("=")[1];
+    if (historyKey) {
+      const h = await client.request<any>("chat.history", { sessionKey: historyKey, limit: 6 });
+      const msgs: any[] = h?.messages ?? h?.history ?? [];
+      console.log(`history for ${historyKey}: ${msgs.length} entries (keys: ${Object.keys(h ?? {}).join(",")})`);
+      for (const m of msgs.slice(-6)) {
+        const content = Array.isArray(m?.content) ? m.content.map((b: any) => (b?.type === "text" ? b.text : `[${b?.type}]`)).join(" ") : String(m?.content ?? m?.text ?? "");
+        console.log(`  ${m?.timestamp ? new Date(m.timestamp).toISOString() : "-"} ${m?.role ?? "?"}: ${content.replace(/\s+/g, " ").slice(0, 200)}`);
+      }
+    }
     if (watchSeconds > 0) {
       console.log(`watching events for ${watchSeconds}s…`);
       client.on("event", (event: string, payload: any) => {
