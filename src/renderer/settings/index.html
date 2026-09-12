@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: data:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+    <title>OpenClaw Pet Settings</title>
+    <link rel="stylesheet" href="../shared.css" />
+    <link rel="stylesheet" href="settings.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>OpenClaw Pet</h1>
+        <div id="connBadge" class="conn conn-off"><span class="dot"></span><span id="connText">OpenClaw off</span></div>
+      </header>
+
+      <section>
+        <h2>General</h2>
+        <div class="row">
+          <div class="row-text"><strong>OpenClaw</strong><span class="muted">Connect the pet to your OpenClaw. It finds the local gateway on its own.</span></div>
+          <label class="switch"><input type="checkbox" id="openclawEnabled" /><span></span></label>
+        </div>
+        <div id="connHint" class="hint" hidden>
+          <div id="connHintText"></div>
+          <details><summary>Details</summary><pre id="connDetail"></pre></details>
+        </div>
+        <div id="connTarget" class="subtle" hidden></div>
+        <div class="row">
+          <div class="row-text"><strong>Launch at login</strong><span class="muted">Start the pet when you sign in.</span></div>
+          <label class="switch"><input type="checkbox" id="launchAtLogin" /><span></span></label>
+        </div>
+        <div class="row">
+          <div class="row-text"><strong>Always on top</strong><span class="muted">Keep the character above other windows.</span></div>
+          <label class="switch"><input type="checkbox" id="alwaysOnTop" /><span></span></label>
+        </div>
+      </section>
+
+      <section>
+        <h2>Character</h2>
+        <div class="row">
+          <div class="row-text"><strong>Character</strong></div>
+          <div class="controls">
+            <select id="characterSelect"></select>
+            <button id="addBtn" class="primary">Add Character</button>
+          </div>
+        </div>
+        <div id="addForm" class="card" hidden>
+          <div class="form-line">
+            <input id="addName" type="text" placeholder="Name (e.g. Momo)" maxlength="40" />
+            <button id="addPick">Choose image…</button>
+            <span id="addPicked" class="muted"></span>
+          </div>
+          <div class="form-line">
+            <button id="addConfirm" class="primary" disabled>Add</button>
+            <button id="addCancel">Cancel</button>
+            <span class="muted">One idle image is enough. PNG, WebP, GIF, JPG or SVG.</span>
+          </div>
+        </div>
+        <div class="row">
+          <div class="row-text"><strong>Size</strong><span class="muted" id="sizeLabel">160 px</span></div>
+          <input id="size" type="range" min="64" max="480" step="8" />
+        </div>
+        <div class="row">
+          <div class="row-text"><strong>Manage</strong></div>
+          <div class="controls wrap">
+            <button id="renameBtn">Rename</button>
+            <button id="duplicateBtn">Duplicate</button>
+            <button id="deleteBtn" class="danger">Delete</button>
+            <button id="importBtn">Import folder…</button>
+            <button id="revealBtn">Show files</button>
+          </div>
+        </div>
+        <h3>Assets <span class="muted">— drop an image on a row, or click Change</span></h3>
+        <div id="assets" class="assets"></div>
+      </section>
+
+      <section>
+        <h2>Behavior</h2>
+        <div class="row">
+          <div class="row-text"><strong>Reactions</strong><span class="muted">Change the look when OpenClaw thinks, works, succeeds, fails or asks something.</span></div>
+          <label class="switch"><input type="checkbox" id="reactionsEnabled" /><span></span></label>
+        </div>
+        <div class="row">
+          <div class="row-text"><strong>Hover chat</strong><span class="muted">Show the quick chat bar when the mouse is over the character. Clicking always works.</span></div>
+          <label class="switch"><input type="checkbox" id="hoverChatEnabled" /><span></span></label>
+        </div>
+        <div class="row">
+          <div class="row-text"><strong>Reaction length</strong><span class="muted" id="reactionLabel">7 s</span></div>
+          <input id="reactionDuration" type="range" min="2" max="30" step="1" />
+        </div>
+      </section>
+
+      <section>
+        <details id="advanced">
+          <summary><h2>OpenClaw connection (advanced)</h2></summary>
+          <p class="muted">Normally nothing to do here: the pet reads <code>~/.openclaw/openclaw.json</code> and connects to the local gateway. Use this for a remote gateway or if the token could not be read.</p>
+          <div class="row">
+            <div class="row-text"><strong>Mode</strong></div>
+            <select id="gwMode"><option value="auto">Auto-detect (recommended)</option><option value="manual">Manual</option></select>
+          </div>
+          <div class="row"><div class="row-text"><strong>Gateway URL</strong></div><input id="gwUrl" type="text" placeholder="ws://127.0.0.1:18789" /></div>
+          <div class="row"><div class="row-text"><strong>Token</strong><span class="muted">openclaw gateway auth-token --show</span></div><input id="gwToken" type="password" placeholder="leave empty to auto-detect" /></div>
+          <div class="row"><div class="row-text"><strong>Password</strong></div><input id="gwPassword" type="password" placeholder="only for password auth" /></div>
+          <div class="row"><div></div><button id="gwSave" class="primary">Save &amp; reconnect</button></div>
+        </details>
+      </section>
+
+      <footer>
+        <span class="muted">Only messages you send from the quick chat use OpenClaw tokens. Everything else stays on this computer.</span>
+        <button id="quitBtn" class="danger">Quit OpenClaw Pet</button>
+      </footer>
+    </main>
+    <div id="toast" hidden></div>
+    <script src="settings.js"></script>
+  </body>
+</html>

@@ -1,0 +1,18 @@
+{
+  "id": "momo",
+  "name": "Momo",
+  "builtIn": true,
+  "assets": {
+    "idle": "idle.svg",
+    "hover": "hover.svg",
+    "pressed": "pressed.svg",
+    "drag": "drag.svg",
+    "drop": "drop.svg",
+    "thinking": "thinking.svg",
+    "working": "working.svg",
+    "happy": "happy.svg",
+    "error": "error.svg",
+    "question": "question.svg",
+    "offline": "offline.svg"
+  }
+}

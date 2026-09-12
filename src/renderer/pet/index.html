@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: data:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+    <title>OpenClaw Pet</title>
+    <link rel="stylesheet" href="../shared.css" />
+    <link rel="stylesheet" href="pet.css" />
+  </head>
+  <body>
+    <div id="stage" class="state-idle">
+      <div id="char" class="hit" title="Drag me · right-click for settings">
+        <div id="badge" aria-hidden="true"></div>
+        <img id="img" alt="" draggable="false" />
+        <div id="dot" title="OpenClaw status"></div>
+      </div>
+      <div id="chat" class="hit">
+        <form id="chatForm" autocomplete="off">
+          <input id="chatInput" type="text" placeholder="Ask OpenClaw…" maxlength="4000" spellcheck="false" />
+        </form>
+        <div id="chatStatus"></div>
+      </div>
+    </div>
+    <script src="pet.js"></script>
+  </body>
+</html>

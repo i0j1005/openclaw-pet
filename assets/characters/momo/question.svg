@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <g stroke="#D67858" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="58" cy="62" r="18" fill="#FFB89A"/><circle cx="142" cy="62" r="18" fill="#FFB89A"/>
+    <circle cx="58" cy="64" r="8" fill="#FF9AA8" stroke="none"/><circle cx="142" cy="64" r="8" fill="#FF9AA8" stroke="none"/>
+    <ellipse cx="100" cy="118" rx="72" ry="64" fill="#FFB89A"/>
+  </g>
+  <circle cx="66" cy="132" r="10" fill="#FF9AA8" opacity="0.7"/><circle cx="134" cy="132" r="10" fill="#FF9AA8" opacity="0.7"/>
+  <path d="M112 92 q12 -8 24 0" fill="none" stroke="#2B2024" stroke-width="4" stroke-linecap="round"/>
+  <ellipse cx="76" cy="110" rx="8" ry="11" fill="#2B2024"/><ellipse cx="124" cy="112" rx="10" ry="13" fill="#2B2024"/>
+  <circle cx="79" cy="106" r="3" fill="#fff"/><circle cx="128" cy="107" r="4" fill="#fff"/>
+  <ellipse cx="102" cy="138" rx="6" ry="7" fill="#2B2024"/>
+  <text x="160" y="52" font-family="Arial, Helvetica, sans-serif" font-size="46" font-weight="700" fill="#FF7A59" stroke="#fff" stroke-width="3" paint-order="stroke">?</text>
+</svg>
