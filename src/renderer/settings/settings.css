@@ -3,7 +3,6 @@ main { max-width: 720px; margin: 0 auto; padding: 20px 24px 40px; }
 header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 h1 { font-size: 20px; margin: 0; }
 h2 { font-size: 14px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
-h3 { font-size: 13px; margin: 18px 0 8px; }
 section { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 14px; }
 .fold-section { padding: 0; overflow: hidden; }
 .settings-fold > summary {
@@ -38,9 +37,7 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
 .section-body > .row:first-child { border-top: 0; }
 .row-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .muted { color: var(--muted); font-size: 12.5px; }
-.subtle { color: var(--muted); font-size: 12px; padding: 4px 0 8px; }
 .controls { display: flex; gap: 8px; align-items: center; }
-.controls.wrap { flex-wrap: wrap; justify-content: flex-end; }
 button {
   border: 1px solid var(--line); background: var(--panel); color: var(--text);
   border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 13px;
@@ -126,6 +123,7 @@ label.inline select { min-width: 220px; }
 .subsection > summary > span { display: flex; flex-direction: column; gap: 2px; }
 .subsection-body { padding: 10px; }
 .subsection-help { margin: 0 2px 9px; }
+.character-tools { display: flex; flex-wrap: wrap; gap: 7px; }
 .assignment-list { display: grid; gap: 6px; padding: 10px; }
 .assignment-empty { padding: 9px 3px; color: var(--muted); font-size: 12.5px; }
 .assignment-row {

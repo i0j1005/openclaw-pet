@@ -70,8 +70,8 @@ function renderSettings(renderCharacter = true): void {
   $<HTMLInputElement>("hoverChatEnabled").checked = settings.hoverChatEnabled;
   $<HTMLInputElement>("size").value = String(settings.size);
   $("sizeLabel").textContent = `${settings.size} px`;
-  renderAmbientRows();
-  renderHoldRows();
+  if ($<HTMLDetailsElement>("behaviorPanel").open && $<HTMLDetailsElement>("ambientPanel").open) renderAmbientRows();
+  if ($<HTMLDetailsElement>("behaviorPanel").open && $<HTMLDetailsElement>("reactionLengthPanel").open) renderHoldRows();
   $<HTMLSelectElement>("gwMode").value = settings.gateway.mode;
   $<HTMLInputElement>("gwUrl").value = settings.gateway.url ?? "";
   $<HTMLInputElement>("gwToken").value = settings.gateway.token ?? "";
@@ -103,15 +103,10 @@ function renderConnection(info: ConnectionInfo): void {
     $("connDetail").textContent = [info.gatewayUrl ? `gateway: ${info.gatewayUrl}` : "", info.detail ?? ""].filter(Boolean).join("\n");
     if (/token/i.test(info.hint)) ($("advanced") as HTMLDetailsElement).open = true;
   } else hint.hidden = true;
-  const target = $("connTarget");
-  if (info.status === "connected" && info.targetSession) {
-    target.hidden = false;
-    target.textContent = `Quick chat continues: ${info.targetSession.label}${info.targetSession.agentId ? ` (agent ${info.targetSession.agentId})` : ""}`;
-  } else target.hidden = true;
   const wasConnected = connected;
   connected = info.status === "connected";
   if (connected && (!wasConnected || agents === null)) void refreshAgents();
-  else if (!connected) renderAgentSelects();
+  else if (!connected && wasConnected) renderAgentSelects();
 }
 
 // ---- agents ----------------------------------------------------------------------
@@ -154,9 +149,9 @@ function renderAgentSelects(): void {
   fillAgentSelect(select, c?.agentId);
   select.disabled = !c;
   const hint = $("agentHint");
-  if (!connected && !agents?.length) hint.textContent = "Connect OpenClaw to list agents. Until then only the current binding is shown.";
-  else if (c?.agentId) hint.textContent = `Quick chat goes to ${c.agentId}'s most recent conversation.`;
-  else hint.textContent = "Any agent: the quick chat continues the most recent conversation, whoever it was with.";
+  if (!connected && !agents?.length) hint.textContent = "Connect OpenClaw to choose an agent.";
+  else if (c?.agentId) hint.textContent = `Uses ${c.agentId}'s recent conversation.`;
+  else hint.textContent = "Uses the most recent conversation.";
   const addSelect = $<HTMLSelectElement>("addAgent");
   fillAgentSelect(addSelect, addSelect.value || undefined);
   renderAgentAssignments();
@@ -164,6 +159,7 @@ function renderAgentSelects(): void {
 
 /** Agent-first view of the same one-to-one bindings stored in each character manifest. */
 function renderAgentAssignments(): void {
+  if (!$<HTMLDetailsElement>("agentAssignmentsPanel").open) return;
   const container = $("agentAssignments");
   container.innerHTML = "";
   const options = new Map<string, AgentOption>();
@@ -330,6 +326,7 @@ function renderCharacterSelect(): void {
  * drag-and-drop that appends (drop several files at once to add several variants).
  */
 function renderAssets(): void {
+  if (!$<HTMLDetailsElement>("assetsPanel").open) return;
   const container = $("assets");
   container.innerHTML = "";
   const c = current();
@@ -418,6 +415,24 @@ bindSwitch("launchAtLogin");
 bindSwitch("alwaysOnTop");
 bindSwitch("reactionsEnabled");
 bindSwitch("hoverChatEnabled");
+
+$<HTMLDetailsElement>("assetsPanel").addEventListener("toggle", (event) => {
+  if ((event.currentTarget as HTMLDetailsElement).open) renderAssets();
+});
+$<HTMLDetailsElement>("agentAssignmentsPanel").addEventListener("toggle", (event) => {
+  if ((event.currentTarget as HTMLDetailsElement).open) renderAgentAssignments();
+});
+$<HTMLDetailsElement>("behaviorPanel").addEventListener("toggle", (event) => {
+  if (!(event.currentTarget as HTMLDetailsElement).open) return;
+  if ($<HTMLDetailsElement>("ambientPanel").open) renderAmbientRows();
+  if ($<HTMLDetailsElement>("reactionLengthPanel").open) renderHoldRows();
+});
+$<HTMLDetailsElement>("ambientPanel").addEventListener("toggle", (event) => {
+  if ((event.currentTarget as HTMLDetailsElement).open) renderAmbientRows();
+});
+$<HTMLDetailsElement>("reactionLengthPanel").addEventListener("toggle", (event) => {
+  if ((event.currentTarget as HTMLDetailsElement).open) renderHoldRows();
+});
 
 const sizeInput = $<HTMLInputElement>("size");
 sizeInput.addEventListener("input", () => ($("sizeLabel").textContent = `${sizeInput.value} px`));

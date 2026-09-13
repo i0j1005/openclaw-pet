@@ -17,20 +17,15 @@
       <div id="chat" class="hit">
         <button id="chatTarget" type="button" title="Choose quick-chat destination" aria-haspopup="dialog" aria-expanded="false">Current conversation</button>
         <div id="targetPopover" role="dialog" aria-label="Quick chat target" hidden>
-          <div class="target-heading">
-            <strong>Target</strong>
-            <button id="targetClose" type="button" title="Close target picker" aria-label="Close target picker">×</button>
-          </div>
           <label>Character<select id="targetCharacter" aria-label="Character"></select></label>
           <label>Agent<select id="targetAgent" aria-label="Agent"></select></label>
           <label>Recent session<select id="targetSession" aria-label="Recent session"></select></label>
-          <div id="targetHint"></div>
+          <div id="targetHint" hidden></div>
         </div>
         <form id="chatForm" autocomplete="off">
-          <textarea id="chatInput" rows="1" placeholder="Ask OpenClaw…" maxlength="4000" spellcheck="false" aria-label="Message OpenClaw"></textarea>
+          <textarea id="chatInput" rows="1" placeholder="Ask OpenClaw…" maxlength="4000" spellcheck="false" aria-label="Message OpenClaw" title="Enter to send · Shift+Enter for a new line"></textarea>
           <button id="chatSend" type="submit" title="Send (Enter)" aria-label="Send message">↑</button>
         </form>
-        <div id="chatHint">Enter to send · Shift+Enter for a new line</div>
       </div>
       <div id="bubble" class="hit" hidden>
         <div id="bubbleHeader">

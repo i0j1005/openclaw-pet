@@ -19,20 +19,19 @@
           <summary><span><h2>General</h2><span class="summary-note">Connection and desktop behavior</span></span></summary>
           <div class="section-body">
         <div class="row">
-          <div class="row-text"><strong>OpenClaw</strong><span class="muted">Connect the pet to your OpenClaw. It finds the local gateway on its own.</span></div>
+          <div class="row-text"><strong>OpenClaw</strong><span class="muted">Auto-connect to the local gateway.</span></div>
           <label class="switch"><input type="checkbox" id="openclawEnabled" /><span></span></label>
         </div>
         <div id="connHint" class="hint" hidden>
           <div id="connHintText"></div>
           <details><summary>Details</summary><pre id="connDetail"></pre></details>
         </div>
-        <div id="connTarget" class="subtle" hidden></div>
         <div class="row">
-          <div class="row-text"><strong>Launch at login</strong><span class="muted">Start the pet when you sign in.</span></div>
+          <div class="row-text"><strong>Launch at login</strong><span class="muted">Start at sign-in.</span></div>
           <label class="switch"><input type="checkbox" id="launchAtLogin" /><span></span></label>
         </div>
         <div class="row">
-          <div class="row-text"><strong>Always on top</strong><span class="muted">Keep the character above other windows.</span></div>
+          <div class="row-text"><strong>Always on top</strong><span class="muted">Keep above other windows.</span></div>
           <label class="switch"><input type="checkbox" id="alwaysOnTop" /><span></span></label>
         </div>
           </div>
@@ -41,7 +40,7 @@
 
       <section class="fold-section">
         <details class="settings-fold" open>
-          <summary><span><h2>Characters</h2><span class="summary-note">Choose, assign, and customize</span></span></summary>
+          <summary><span><h2>Characters</h2><span class="summary-note">Select and customize</span></span></summary>
           <div class="section-body">
         <div class="row">
           <div class="row-text"><strong>Character</strong></div>
@@ -58,7 +57,7 @@
           </div>
           <div class="form-line">
             <label class="inline">Agent <select id="addAgent"></select></label>
-            <span class="muted">Which OpenClaw agent this character talks to. You can change it later.</span>
+            <span class="muted">Optional.</span>
           </div>
           <div class="form-line">
             <button id="addConfirm" class="primary" disabled>Add</button>
@@ -67,31 +66,31 @@
           </div>
         </div>
         <div class="row">
-          <div class="row-text"><strong>This character's agent</strong><span class="muted" id="agentHint">The OpenClaw agent this character's quick chat talks to.</span></div>
+          <div class="row-text"><strong>Agent</strong><span class="muted" id="agentHint">Quick-chat destination.</span></div>
           <select id="agentSelect"></select>
         </div>
         <div class="row">
           <div class="row-text"><strong>Size</strong><span class="muted" id="sizeLabel">160 px</span></div>
           <input id="size" type="range" min="64" max="480" step="8" />
         </div>
-        <div class="row">
-          <div class="row-text"><strong>Manage</strong></div>
-          <div class="controls wrap">
+        <details class="subsection" id="characterToolsPanel">
+          <summary><span><strong>Character tools</strong><span class="muted">Rename, duplicate, import, or remove</span></span></summary>
+          <div class="subsection-body character-tools">
             <button id="renameBtn">Rename</button>
             <button id="duplicateBtn">Duplicate</button>
             <button id="deleteBtn" class="danger">Delete</button>
             <button id="importBtn">Import folder…</button>
             <button id="revealBtn">Show files</button>
           </div>
-        </div>
-        <details class="subsection" id="agentAssignmentsPanel" open>
-          <summary><span><strong>Agent characters</strong><span class="muted">Assign one character to each connected agent.</span></span></summary>
+        </details>
+        <details class="subsection" id="agentAssignmentsPanel">
+          <summary><span><strong>Agent characters</strong><span class="muted">Assign agents in bulk</span></span></summary>
           <div id="agentAssignments" class="assignment-list"></div>
         </details>
         <details class="subsection" id="assetsPanel">
-          <summary><span><strong>Character assets</strong><span class="muted">Images and animation variants for each state.</span></span></summary>
+          <summary><span><strong>Character assets</strong><span class="muted">State images and variants</span></span></summary>
           <div class="subsection-body">
-            <p class="muted subsection-help">Several images can be added per state; one is picked at random whenever the state starts. Drop images on a row or click Add.</p>
+            <p class="muted subsection-help">Drop files or click Add. One image is chosen each time a state starts.</p>
             <div id="assets" class="assets"></div>
           </div>
         </details>
@@ -100,27 +99,31 @@
       </section>
 
       <section class="fold-section">
-        <details class="settings-fold">
+        <details id="behaviorPanel" class="settings-fold">
           <summary><span><h2>Behavior</h2><span class="summary-note">Chat, reactions, and motion</span></span></summary>
           <div class="section-body">
         <div class="row">
-          <div class="row-text"><strong>Reactions</strong><span class="muted">Change the look after a reply: happy, praise, encourage, shy, sad, tired, error or question. Decided locally from the reply text, never with an extra prompt.</span></div>
+          <div class="row-text"><strong>Reactions</strong><span class="muted">Local reply-based reactions; no extra model call.</span></div>
           <label class="switch"><input type="checkbox" id="reactionsEnabled" /><span></span></label>
         </div>
         <div class="row">
-          <div class="row-text"><strong>Hover chat</strong><span class="muted">Show the quick chat bar when the mouse is over the character. Clicking always works.</span></div>
+          <div class="row-text"><strong>Hover chat</strong><span class="muted">Show chat on hover. Clicking always works.</span></div>
           <label class="switch"><input type="checkbox" id="hoverChatEnabled" /><span></span></label>
         </div>
         <div class="row">
-          <div class="row-text"><strong>Speech bubble</strong><span class="muted">After you press Enter the input turns into a bubble with your message and the reply. Use its header buttons to copy, collapse, or close it; drag the corner to resize.</span></div>
+          <div class="row-text"><strong>Bubble size</strong><span class="muted">Drag a bubble's corner to resize it.</span></div>
           <div class="controls">
             <button id="bubbleReset" class="small">Reset size</button>
           </div>
         </div>
-        <h3>Ambient motion <span class="muted">— looping motion per state. Off by default: it keeps the GPU a little busy.</span></h3>
-        <div id="ambientRows" class="grid-rows"></div>
-        <h3>Reaction length <span class="muted">— how long each reaction stays before the character goes back to idle.</span></h3>
-        <div id="holdRows" class="grid-rows"></div>
+        <details class="subsection" id="ambientPanel">
+          <summary><span><strong>Ambient motion</strong><span class="muted">Optional looping animation</span></span></summary>
+          <div class="subsection-body"><div id="ambientRows" class="grid-rows"></div></div>
+        </details>
+        <details class="subsection" id="reactionLengthPanel">
+          <summary><span><strong>Reaction length</strong><span class="muted">Delay before returning to idle</span></span></summary>
+          <div class="subsection-body"><div id="holdRows" class="grid-rows"></div></div>
+        </details>
           </div>
         </details>
       </section>

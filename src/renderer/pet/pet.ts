@@ -29,7 +29,6 @@ const chatInput = $<HTMLTextAreaElement>("chatInput");
 const chatSend = $<HTMLButtonElement>("chatSend");
 const chatTarget = $<HTMLButtonElement>("chatTarget");
 const targetPopover = $<HTMLDivElement>("targetPopover");
-const targetClose = $<HTMLButtonElement>("targetClose");
 const targetCharacter = $<HTMLSelectElement>("targetCharacter");
 const targetAgent = $<HTMLSelectElement>("targetAgent");
 const targetSession = $<HTMLSelectElement>("targetSession");
@@ -285,6 +284,7 @@ function isBubblePending(): boolean {
 
 function setTargetHint(text: string, error = false): void {
   targetHint.textContent = text;
+  targetHint.hidden = !text;
   targetHint.classList.toggle("error", error);
 }
 
@@ -353,7 +353,7 @@ async function refreshTargetPopover(): Promise<void> {
     renderTargetChoices(sessions);
     if (connection.status !== "connected") setTargetHint("OpenClaw is offline.");
     else if (sessions.length === 0) setTargetHint("No recent sessions · using the main conversation.");
-    else setTargetHint("Agent is saved · session resets on restart.");
+    else setTargetHint("");
   } catch (err) {
     if (refreshId !== targetRefreshId) return;
     renderTargetChoices();
@@ -394,7 +394,6 @@ chatTarget.addEventListener("click", (event) => {
   }
   render();
 });
-targetClose.addEventListener("click", closeTargetPopover);
 targetCharacter.addEventListener("change", async () => {
   const next = await api.settings.update({ characterId: targetCharacter.value });
   applySettings(next);

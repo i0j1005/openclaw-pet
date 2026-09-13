@@ -3,8 +3,8 @@ import { BrowserWindow, screen, shell } from "electron";
 import { join } from "node:path";
 
 export const PET_PAD = 12;
-/** Vertical room under the character for the quick chat bar + status line. */
-export const CHAT_AREA_HEIGHT = 92;
+/** Vertical room under the character for the target label and compact quick-chat input. */
+export const CHAT_AREA_HEIGHT = 76;
 export const MIN_PET_WINDOW_WIDTH = 280;
 
 /** Content size the renderer needs beyond the base layout (speech bubble open, wide bubble…). */
