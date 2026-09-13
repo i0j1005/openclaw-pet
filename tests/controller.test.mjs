@@ -73,6 +73,43 @@ test("session and pending quick-chat tracking stay bounded", () => {
   assert.equal(controller.myRunIds.size, 0);
 });
 
+test("exact active run ids override stale aggregate session activity", () => {
+  const controller = createController();
+
+  controller.handleSessionsChanged({ key: "agent:main:main", hasActiveRun: true, activeRunIds: ["run-1"] });
+  assert.equal(controller.getSnapshot().activity, "thinking");
+
+  controller.handleSessionsChanged({ key: "agent:main:main", hasActiveRun: true, activeRunIds: [] });
+  assert.equal(controller.getSnapshot().activity, "idle");
+  controller.dispose();
+});
+
+test("agent lifecycle completion clears coarse session activity", async () => {
+  const controller = createController();
+  const sessionKey = "agent:main:main";
+  controller.runs.set("run-1", { sessionKey, startedAt: Date.now(), toolsRunning: 0, mine: false });
+  controller.activeSessions.set(sessionKey, Date.now());
+
+  controller.handleAgentEvent({ runId: "run-1", sessionKey, stream: "lifecycle", data: { phase: "end" } });
+  assert.equal(controller.getSnapshot().activity, "thinking");
+  await new Promise((resolve) => setTimeout(resolve, 1550));
+  assert.equal(controller.getSnapshot().activity, "idle");
+  controller.dispose();
+});
+
+test("stale activity expires without waiting for another gateway event", async () => {
+  const controller = createController();
+  const snapshots = [];
+  controller.on("snapshot", (snapshot) => snapshots.push(snapshot));
+  controller.activeSessions.set("agent:main:main", Date.now() - 10 * 60_000 + 30);
+
+  controller.emitSnapshot();
+  assert.equal(snapshots.at(-1).activity, "thinking");
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(snapshots.at(-1).activity, "idle");
+  controller.dispose();
+});
+
 test("recent sessions can be listed and pinned within the selected agent", () => {
   const controller = createController();
   controller.rememberSession({ key: "agent:alpha:older", agentId: "alpha", kind: "direct", displayName: "Older chat", lastInteractionAt: 10 });

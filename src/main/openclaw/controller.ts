@@ -35,6 +35,7 @@ interface SessionRow {
   updatedAt?: number;
   lastInteractionAt?: number;
   hasActiveRun?: boolean;
+  activeRunIds?: string[] | null;
   archived?: boolean;
 }
 
@@ -74,6 +75,7 @@ export class OpenClawController extends EventEmitter {
   /** Optional exact session chosen in the pet popover. Cleared when the character's agent changes. */
   private targetSessionKey: string | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private activityCleanupTimer: NodeJS.Timeout | null = null;
   private reactionTimer: NodeJS.Timeout | null = null;
   private backoffMs = BACKOFF_MIN_MS;
   private runs = new Map<string, ActiveRun>();
@@ -297,6 +299,8 @@ export class OpenClawController extends EventEmitter {
     this.generation += 1;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+    if (this.activityCleanupTimer) clearTimeout(this.activityCleanupTimer);
+    this.activityCleanupTimer = null;
     const client = this.client;
     this.client = null;
     client?.removeAllListeners();
@@ -403,13 +407,19 @@ export class OpenClawController extends EventEmitter {
         requireLastInteraction: true,
         configuredAgentsOnly: true,
       });
-      for (const row of res?.list?.sessions ?? []) this.rememberSession(row);
+      for (const row of res?.list?.sessions ?? []) {
+        this.rememberSession(row);
+        this.updateSessionActivity(row, row);
+      }
       this.opts.log?.(`sessions loaded: ${this.sessions.size}`);
     } catch (err) {
       this.opts.log?.(`sessions.subscribe failed: ${(err as Error).message}`);
       try {
         const list = await client.request<{ sessions?: SessionRow[] }>("sessions.list", { limit: 40, sortBy: "lastInteractionAt" });
-        for (const row of list?.sessions ?? []) this.rememberSession(row);
+        for (const row of list?.sessions ?? []) {
+          this.rememberSession(row);
+          this.updateSessionActivity(row, row);
+        }
       } catch (err2) {
         this.opts.log?.(`sessions.list failed: ${(err2 as Error).message}`);
       }
@@ -525,11 +535,11 @@ export class OpenClawController extends EventEmitter {
         if (data.phase === "start") this.touchRun(p.runId, sessionKey ?? "", p.agentId, mine);
         else if (data.phase === "end" || data.phase === "error") {
           // The `chat` terminal event carries the reply; lifecycle just guarantees cleanup.
+          const gen = this.generation;
           setTimeout(() => {
-            if (this.runs.has(p.runId)) {
-              this.runs.delete(p.runId);
-              this.emitSnapshot();
-            }
+            if (gen !== this.generation) return;
+            this.settleRunActivity(p.runId, sessionKey);
+            this.emitSnapshot();
           }, 1500);
         }
         break;
@@ -607,10 +617,7 @@ export class OpenClawController extends EventEmitter {
       const row: SessionRow = { ...r, key };
       rows.push(row);
       this.rememberSession(row);
-      if (this.isIgnoredSession(key)) continue;
-      // `hasActiveRun` is the gateway's authoritative activity fact; the reason strings are the cheap live hint.
-      if (row.hasActiveRun === true || r.reason === "chat.run.started") this.activeSessions.set(key, Date.now());
-      else if (row.hasActiveRun === false || r.reason === "chat.run.settled" || r.reason === "chat.run.aborted") this.activeSessions.delete(key);
+      this.updateSessionActivity(row, r);
     }
     if (rows.length) {
       this.emit("connection", this.getConnection());
@@ -629,6 +636,41 @@ export class OpenClawController extends EventEmitter {
       this.opts.log?.(`run ${runId.slice(0, 8)} started (${sessionKey || "?"})${mine ? " [quick chat]" : ""}`);
     }
     return run;
+  }
+
+  /**
+   * Clears the coarse per-session activity flag when a lifecycle event is the only terminal signal
+   * we receive. A delayed sessions.changed(started) event can otherwise leave the pet thinking even
+   * after the exact run has ended.
+   */
+  private settleRunActivity(runId: string, fallbackSessionKey?: string): void {
+    const sessionKey = this.runs.get(runId)?.sessionKey || this.myRunIds.get(runId)?.sessionKey || fallbackSessionKey;
+    this.runs.delete(runId);
+    if (!sessionKey) return;
+    const anotherObservedRun = [...this.runs.values()].some((run) => run.sessionKey === sessionKey);
+    const anotherQuickChat = [...this.myRunIds].some(([id, run]) => id !== runId && run.sessionKey === sessionKey);
+    if (!anotherObservedRun && !anotherQuickChat) this.activeSessions.delete(sessionKey);
+  }
+
+  /** Applies a full session snapshot or delta without treating omitted fields as false. */
+  private updateSessionActivity(row: SessionRow, raw: object & { reason?: unknown }): void {
+    if (this.isIgnoredSession(row.key)) return;
+    if (row.archived) {
+      this.activeSessions.delete(row.key);
+      return;
+    }
+
+    // When present, activeRunIds is the exact complete set. An empty array proves the session is idle.
+    if (Object.prototype.hasOwnProperty.call(raw, "activeRunIds") && Array.isArray(row.activeRunIds)) {
+      if (row.activeRunIds.length > 0) this.activeSessions.set(row.key, Date.now());
+      else this.activeSessions.delete(row.key);
+      return;
+    }
+
+    if (row.hasActiveRun === true || raw.reason === "chat.run.started") this.activeSessions.set(row.key, Date.now());
+    else if (row.hasActiveRun === false || raw.reason === "chat.run.settled" || raw.reason === "chat.run.aborted") {
+      this.activeSessions.delete(row.key);
+    }
   }
 
   private async fetchAgentRoster(client: GatewayClient): Promise<AgentOption[]> {
@@ -651,9 +693,29 @@ export class OpenClawController extends EventEmitter {
 
   private pruneStaleRuns(): void {
     const now = Date.now();
-    for (const [id, run] of this.runs) if (now - run.startedAt > STALE_RUN_MS) this.runs.delete(id);
-    for (const [key, at] of this.activeSessions) if (now - at > STALE_RUN_MS) this.activeSessions.delete(key);
-    for (const [id, chat] of this.myRunIds) if (now - chat.startedAt > STALE_RUN_MS) this.myRunIds.delete(id);
+    for (const [id, run] of this.runs) if (now - run.startedAt >= STALE_RUN_MS) this.runs.delete(id);
+    for (const [key, at] of this.activeSessions) if (now - at >= STALE_RUN_MS) this.activeSessions.delete(key);
+    for (const [id, chat] of this.myRunIds) if (now - chat.startedAt >= STALE_RUN_MS) this.myRunIds.delete(id);
+  }
+
+  /** Wakes the controller at the next stale deadline so cleanup does not depend on another event. */
+  private scheduleActivityCleanup(): void {
+    if (this.activityCleanupTimer) clearTimeout(this.activityCleanupTimer);
+    this.activityCleanupTimer = null;
+    const deadlines = [
+      ...[...this.runs.values()].map((run) => run.startedAt + STALE_RUN_MS),
+      ...[...this.activeSessions.values()].map((at) => at + STALE_RUN_MS),
+      ...[...this.myRunIds.values()].map((chat) => chat.startedAt + STALE_RUN_MS),
+    ];
+    if (!deadlines.length) return;
+    const gen = this.generation;
+    const delay = Math.max(1, Math.min(...deadlines) - Date.now() + 1);
+    this.activityCleanupTimer = setTimeout(() => {
+      this.activityCleanupTimer = null;
+      if (gen !== this.generation) return;
+      this.pruneStaleRuns();
+      this.emitSnapshot();
+    }, delay);
   }
 
   private activity(): ActivityState {
@@ -801,6 +863,7 @@ export class OpenClawController extends EventEmitter {
 
   private emitSnapshot(): void {
     const snapshot = this.getSnapshot();
+    this.scheduleActivityCleanup();
     const signature = JSON.stringify(snapshot);
     if (signature === this.lastSnapshotSignature) return;
     this.lastSnapshotSignature = signature;
