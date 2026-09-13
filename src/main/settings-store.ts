@@ -77,6 +77,11 @@ export function migrateSettings(raw: unknown): Settings {
       patch.reactionHoldMs = { happy: ms, error: ms, question: ms };
     }
   }
+  if (version < 4 && parsed.position && Number.isFinite(parsed.position.x) && Number.isFinite(parsed.position.y)) {
+    // v4 widened the base window from 280px to 384px. Shift its saved left edge by half the
+    // difference so the character's on-screen centre stays exactly where the user left it.
+    patch.position = { x: parsed.position.x - 52, y: parsed.position.y };
+  }
   patch.settingsVersion = SETTINGS_VERSION;
   return normalizeSettings(mergeSettings(structuredClone(DEFAULT_SETTINGS), patch));
 }

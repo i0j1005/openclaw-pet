@@ -183,7 +183,7 @@ export interface Settings {
   gateway: GatewaySettings;
 }
 
-export const SETTINGS_VERSION = 3;
+export const SETTINGS_VERSION = 4;
 
 export const AMBIENT_LIMITS = { intensity: { min: 0.2, max: 2.5 }, speed: { min: 0.25, max: 3 } } as const;
 export const BUBBLE_LIMITS = { width: { min: 160, max: 640 }, maxHeight: { min: 48, max: 640 } } as const;

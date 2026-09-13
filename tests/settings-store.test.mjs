@@ -7,7 +7,7 @@ import { SettingsStore, migrateSettings } from "../dist/tests/settings-store.js"
 
 test("a v1 settings.json loads with the new defaults filled in", () => {
   const s = migrateSettings({ openclawEnabled: false, size: 200, ambientMotionEnabled: false, reactionDurationMs: 5000 });
-  assert.equal(s.settingsVersion, 3);
+  assert.equal(s.settingsVersion, 4);
   assert.equal(s.openclawEnabled, false);
   assert.equal(s.petVisible, true);
   assert.equal(s.size, 200);
@@ -28,7 +28,7 @@ test("v1 ambientMotionEnabled=true turns every state on", () => {
 
 test("an empty or corrupt file yields defaults", () => {
   const s = migrateSettings(null);
-  assert.equal(s.settingsVersion, 3);
+  assert.equal(s.settingsVersion, 4);
   assert.equal(s.characterId, "momo");
 });
 
@@ -52,7 +52,7 @@ test("values are clamped and partial record patches merge", () => {
   assert.equal(again.bubble.width, 640);
   // the file never carries the legacy keys
   const json = JSON.parse(readFileSync(join(dir, "settings.json"), "utf8"));
-  assert.equal(json.settingsVersion, 3);
+  assert.equal(json.settingsVersion, 4);
   assert.equal(json.petVisible, false);
   assert.equal("reactionDurationMs" in json, false);
 });
@@ -64,4 +64,12 @@ test("an on-disk v1 file is migrated on load", () => {
   assert.equal(s.size, 120);
   assert.equal(s.reactionHoldMs.question, 3000);
   assert.equal(s.ambientMotion.question.enabled, true);
+});
+
+test("pre-v4 positions keep the character center fixed after the wider base window", () => {
+  const old = migrateSettings({ settingsVersion: 3, position: { x: 1000, y: 500 } });
+  assert.deepEqual(old.position, { x: 948, y: 500 });
+
+  const current = migrateSettings({ settingsVersion: 4, position: { x: 948, y: 500 } });
+  assert.deepEqual(current.position, { x: 948, y: 500 });
 });
