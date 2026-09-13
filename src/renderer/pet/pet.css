@@ -481,5 +481,9 @@ html, body {
 #bubbleEdit:disabled { opacity: 0.4; cursor: default; }
 
 @media (prefers-reduced-motion: reduce) {
-  #img { animation: none !important; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

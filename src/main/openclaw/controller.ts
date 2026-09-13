@@ -59,6 +59,7 @@ const REACTION_MIN_VISIBLE_MS = 2_500;
 const STALE_RUN_MS = 10 * 60_000;
 const CHAT_STREAM_THROTTLE_MS = 50;
 const MAX_TRACKED_SESSIONS = 100;
+const AGENT_ROSTER_CACHE_MS = 30_000;
 /** Session key fragments that are background/automation and should not drive the pet. */
 const IGNORED_SESSION_FRAGMENTS = [":cron:", ":heartbeat", ":hook:", ":webhook:", "explicit:model-run-", "incognito-"];
 
@@ -77,6 +78,8 @@ export class OpenClawController extends EventEmitter {
   private backoffMs = BACKOFF_MIN_MS;
   private runs = new Map<string, ActiveRun>();
   private sessions = new Map<string, SessionRow>();
+  private agentRosterCache: { value: AgentOption[]; at: number } | null = null;
+  private agentRosterRequest: Promise<AgentOption[]> | null = null;
   /** Quick chats awaiting a terminal reply, bounded by the same stale timeout as observed runs. */
   private myRunIds = new Map<string, { sessionKey: string; startedAt: number }>();
   /** Sessions the gateway reports as running (sessions.changed / user transcript entries), keyed by session. */
@@ -141,25 +144,27 @@ export class OpenClawController extends EventEmitter {
   async listAgents(): Promise<AgentOption[]> {
     const client = this.client;
     if (!client?.connected) return [];
-    try {
-      const res = await client.request<{ defaultId?: string; agents?: Array<{ id?: string; kind?: string; name?: string; identity?: { name?: string; emoji?: string } }> }>(
-        "agents.list",
-        {},
-      );
-      const out: AgentOption[] = [];
-      for (const a of res?.agents ?? []) {
-        if (!a || typeof a.id !== "string" || !a.id || a.kind === "system") continue;
-        out.push({
-          id: a.id,
-          name: a.identity?.name || a.name || a.id,
-          ...(a.identity?.emoji ? { emoji: a.identity.emoji } : {}),
-          ...(res?.defaultId === a.id ? { isDefault: true } : {}),
-        });
+    if (this.agentRosterCache && Date.now() - this.agentRosterCache.at < AGENT_ROSTER_CACHE_MS) {
+      return this.agentRosterCache.value.map((agent) => ({ ...agent }));
+    }
+    if (this.agentRosterRequest) {
+      try {
+        return (await this.agentRosterRequest).map((agent) => ({ ...agent }));
+      } catch {
+        return [];
       }
-      return out;
+    }
+    const request = this.fetchAgentRoster(client);
+    this.agentRosterRequest = request;
+    try {
+      const value = await request;
+      if (client === this.client) this.agentRosterCache = { value, at: Date.now() };
+      return value.map((agent) => ({ ...agent }));
     } catch (err) {
       this.opts.log?.(`agents.list failed: ${(err as Error).message}`);
       return [];
+    } finally {
+      if (this.agentRosterRequest === request) this.agentRosterRequest = null;
     }
   }
 
@@ -299,6 +304,8 @@ export class OpenClawController extends EventEmitter {
     this.runs.clear();
     this.activeSessions.clear();
     this.myRunIds.clear();
+    this.agentRosterCache = null;
+    this.agentRosterRequest = null;
     this.clearPendingStreamStatus();
     this.lastChatStatusSignature = "";
     this.subscribedKey = null;
@@ -622,6 +629,24 @@ export class OpenClawController extends EventEmitter {
       this.opts.log?.(`run ${runId.slice(0, 8)} started (${sessionKey || "?"})${mine ? " [quick chat]" : ""}`);
     }
     return run;
+  }
+
+  private async fetchAgentRoster(client: GatewayClient): Promise<AgentOption[]> {
+    const res = await client.request<{
+      defaultId?: string;
+      agents?: Array<{ id?: string; kind?: string; name?: string; identity?: { name?: string; emoji?: string } }>;
+    }>("agents.list", {});
+    const out: AgentOption[] = [];
+    for (const agent of res?.agents ?? []) {
+      if (!agent || typeof agent.id !== "string" || !agent.id || agent.kind === "system") continue;
+      out.push({
+        id: agent.id,
+        name: agent.identity?.name || agent.name || agent.id,
+        ...(agent.identity?.emoji ? { emoji: agent.identity.emoji } : {}),
+        ...(res?.defaultId === agent.id ? { isDefault: true } : {}),
+      });
+    }
+    return out;
   }
 
   private pruneStaleRuns(): void {

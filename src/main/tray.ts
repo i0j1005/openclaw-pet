@@ -17,7 +17,7 @@ export class PetTray {
   private enabled = true;
   private petVisible = true;
   private characterName = "No character";
-  private targetAgentId: string | null = null;
+  private renderSignature = "";
 
   constructor(private readonly assetsDir: string, private readonly actions: TrayActions) {
     this.tray = new Tray(this.icon());
@@ -33,13 +33,11 @@ export class PetTray {
     enabled?: boolean;
     petVisible?: boolean;
     characterName?: string;
-    targetAgentId?: string | null;
   }): void {
     if (params.connection) this.connection = params.connection;
     if (typeof params.enabled === "boolean") this.enabled = params.enabled;
     if (typeof params.petVisible === "boolean") this.petVisible = params.petVisible;
     if (typeof params.characterName === "string") this.characterName = params.characterName;
-    if ("targetAgentId" in params) this.targetAgentId = params.targetAgentId ?? null;
     this.rebuild();
   }
 
@@ -63,12 +61,21 @@ export class PetTray {
   }
 
   private rebuild(): void {
+    const signature = JSON.stringify([
+      this.connection.status,
+      this.connection.status === "error" ? this.connection.hint : "",
+      this.characterName,
+      this.enabled,
+      this.petVisible,
+    ]);
+    if (signature === this.renderSignature) return;
+    this.renderSignature = signature;
     const menu = Menu.buildFromTemplate([
       { label: this.statusLine(), enabled: false },
       ...(this.connection.status === "error" && this.connection.hint
         ? [{ label: wrap(this.connection.hint, 60), enabled: false }]
         : []),
-      { label: `${this.characterName} → ${this.targetAgentId ?? "Any agent"}`, enabled: false },
+      { label: this.characterName, enabled: false },
       { type: "separator" },
       {
         label: "OpenClaw",
@@ -83,7 +90,7 @@ export class PetTray {
       { label: "Quit OpenClaw Pet", accelerator: "CmdOrCtrl+Q", click: () => this.actions.quit() },
     ]);
     this.tray.setContextMenu(menu);
-    this.tray.setToolTip(`OpenClaw Pet — ${this.characterName} → ${this.targetAgentId ?? "Any agent"} — ${this.statusLine()}`);
+    this.tray.setToolTip(`OpenClaw Pet — ${this.characterName} — ${this.statusLine()}`);
   }
 
   private icon(): NativeImage {

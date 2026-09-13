@@ -120,3 +120,32 @@ test("abortQuickChat sends the exact session and run to chat.abort", async () =>
   assert.deepEqual(statuses.at(-1), { runId: "run-7", phase: "aborted" });
   controller.dispose();
 });
+
+test("agent roster requests are shared and cached", async () => {
+  const controller = createController();
+  let requests = 0;
+  controller.client = {
+    connected: true,
+    removeAllListeners: () => {},
+    close: () => {},
+    request: async () => {
+      requests += 1;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return {
+        defaultId: "main",
+        agents: [
+          { id: "main", identity: { name: "Mina", emoji: "🌻" } },
+          { id: "internal", kind: "system" },
+        ],
+      };
+    },
+  };
+
+  const [first, second] = await Promise.all([controller.listAgents(), controller.listAgents()]);
+  const third = await controller.listAgents();
+  assert.equal(requests, 1);
+  assert.deepEqual(first, [{ id: "main", name: "Mina", emoji: "🌻", isDefault: true }]);
+  assert.deepEqual(second, first);
+  assert.deepEqual(third, first);
+  controller.dispose();
+});

@@ -69,6 +69,7 @@ let chatHideTimer: number | null = null;
 let chatOverride = false; // opened by click; stays until Esc / blur
 let targetPopoverOpen = false;
 let targetRefreshId = 0;
+let targetRefreshTimer: number | null = null;
 let currentSrc = "";
 
 // speech bubble state (last exchange; stays until the next message is sent)
@@ -82,6 +83,7 @@ let bubbleState: { visible: boolean; user: string; reply: string; phase: BubbleP
 let resizing: { startX: number; startY: number; w: number; h: number } | null = null;
 let replyNoticeVisible = false;
 let bubbleActionBusy = false;
+let renderedBubbleSource: string | null = null;
 
 const BADGES: Partial<Record<PetState, string>> = {
   thinking: "…",
@@ -262,16 +264,14 @@ function chatOpen(): boolean {
 
 function renderChatTarget(): void {
   const name = character?.name ?? "Character";
+  chatTarget.textContent = name;
+  chatTarget.setAttribute("aria-label", `Choose quick-chat target for ${name}`);
   if (!settings?.openclawEnabled) {
-    chatTarget.textContent = `${name} · OpenClaw is off`;
     chatTarget.title = "Enable OpenClaw in Settings or the menu bar";
     return;
   }
   const target = connection.targetSession;
-  if (target?.agentId) chatTarget.textContent = `${name} → ${target.agentId}`;
-  else if (character?.agentId) chatTarget.textContent = `${name} → ${character.agentId}`;
-  else chatTarget.textContent = `${name} → most recent agent`;
-  chatTarget.title = target ? `Quick chat continues: ${target.label}` : "The destination will resolve after OpenClaw connects";
+  chatTarget.title = target ? `Choose agent or session · current: ${target.label}` : "Choose agent or recent session";
 }
 
 function renderReplyNotice(): void {
@@ -335,11 +335,14 @@ function renderTargetChoices(sessions: QuickChatSessionOption[] = []): void {
     selectedSession,
   );
   targetCharacter.disabled = allCharacters.length < 2;
-  targetAgent.disabled = connection.status !== "connected" && agents.length === 0;
+  // An offline character can still be unbound; only disable a select that has no real choice.
+  targetAgent.disabled = knownAgents.length === 0 && !currentAgent;
   targetSession.disabled = connection.status !== "connected" || sessions.length === 0;
 }
 
 async function refreshTargetPopover(): Promise<void> {
+  if (targetRefreshTimer) window.clearTimeout(targetRefreshTimer);
+  targetRefreshTimer = null;
   const refreshId = ++targetRefreshId;
   setTargetHint("Loading destinations…");
   try {
@@ -350,9 +353,9 @@ async function refreshTargetPopover(): Promise<void> {
     if (refreshId !== targetRefreshId) return;
     agents = nextAgents;
     renderTargetChoices(sessions);
-    if (connection.status !== "connected") setTargetHint("Connect OpenClaw to choose an agent or session.");
-    else if (sessions.length === 0) setTargetHint("No recent sessions yet; quick chat will use the agent's main conversation.");
-    else setTargetHint("Character and agent bindings are saved. The exact session is temporary.");
+    if (connection.status !== "connected") setTargetHint("OpenClaw is offline.");
+    else if (sessions.length === 0) setTargetHint("No recent sessions · using the main conversation.");
+    else setTargetHint("Agent is saved · session resets on restart.");
   } catch (err) {
     if (refreshId !== targetRefreshId) return;
     renderTargetChoices();
@@ -361,9 +364,21 @@ async function refreshTargetPopover(): Promise<void> {
   requestExtent();
 }
 
+function scheduleTargetRefresh(): void {
+  if (!targetPopoverOpen) return;
+  if (targetRefreshTimer) window.clearTimeout(targetRefreshTimer);
+  targetRefreshTimer = window.setTimeout(() => {
+    targetRefreshTimer = null;
+    void refreshTargetPopover();
+  }, 120);
+}
+
 function closeTargetPopover(): void {
   if (!targetPopoverOpen) return;
   targetPopoverOpen = false;
+  targetRefreshId += 1;
+  if (targetRefreshTimer) window.clearTimeout(targetRefreshTimer);
+  targetRefreshTimer = null;
   targetPopover.hidden = true;
   chatTarget.setAttribute("aria-expanded", "false");
   render();
@@ -550,7 +565,11 @@ function renderBubble(): void {
   bubbleUser.textContent = bubbleState.user;
   const placeholder =
     bubbleState.phase === "sending" ? "Sending" : bubbleState.phase === "working" ? "Working on it" : bubbleState.phase === "thinking" ? "Thinking" : "";
-  renderLimitedMarkdown(bubbleReply, bubbleState.reply || placeholder);
+  const bubbleSource = bubbleState.reply || placeholder;
+  if (bubbleSource !== renderedBubbleSource) {
+    renderLimitedMarkdown(bubbleReply, bubbleSource);
+    renderedBubbleSource = bubbleSource;
+  }
   const pillText = bubbleState.reply ? bubbleState.reply : placeholder ? `${placeholder}…` : "";
   bubblePill.textContent = pillText.replace(/\s+/g, " ").trim().slice(0, 80);
   bubbleCopy.disabled = !bubbleState.reply;
@@ -791,7 +810,7 @@ api.settings.onChange((s) => {
 api.characters.onChange((all) => {
   allCharacters = all;
   setCharacter(all.find((c) => c.id === settings?.characterId) ?? all[0] ?? null);
-  if (targetPopoverOpen) void refreshTargetPopover();
+  scheduleTargetRefresh();
 });
 api.openclaw.onSnapshot((snap) => {
   snapshot = snap;
@@ -801,7 +820,7 @@ api.openclaw.onConnection((info) => {
   connection = info;
   snapshot = { ...snapshot, connection: info.status };
   render();
-  if (targetPopoverOpen) void refreshTargetPopover();
+  scheduleTargetRefresh();
 });
 
 (async () => {

@@ -120,7 +120,6 @@ function updateTrayIdentity(connection = controller?.getConnection()): void {
   tray?.update({
     ...(connection ? { connection } : {}),
     characterName: active?.name ?? "No character",
-    targetAgentId: connection?.targetSession?.agentId ?? active?.agentId ?? null,
   });
 }
 
