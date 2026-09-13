@@ -72,7 +72,7 @@ The device is listed as `OpenClaw Pet`.
 | Open Settings | Right-click the character or use the tray menu. |
 | Hide or show | Use the tray/menu-bar item. The choice is remembered across launches. |
 
-The status dot is green when connected, amber while connecting, red when attention is needed, and grey when OpenClaw is disabled.
+When OpenClaw is unavailable, the character switches to its `offline` asset (or an idle fallback with a small badge). Connection details remain available in Settings and the tray menu.
 
 ### Choosing an agent
 
@@ -182,8 +182,8 @@ Windows targets are configured for a per-user NSIS installer and a portable exec
 
 ## Troubleshooting
 
-- **The status dot is red:** open Settings and check the connection hint. Use **Details** for the Gateway error code.
-- **The status dot is grey:** enable OpenClaw from Settings or the tray menu.
+- **The character looks offline or asleep:** open Settings and check the connection hint. Use **Details** for the Gateway error code.
+- **OpenClaw is disabled:** enable it from Settings or the tray menu.
 - **No session is found:** send a message from an OpenClaw client first, then retry quick chat.
 - **The local Gateway is not running:** start it with `openclaw gateway start`.
 - **Automatic discovery cannot read a token:** obtain it with `openclaw gateway auth-token --show` and enter it in the advanced connection settings.

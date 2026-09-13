@@ -37,24 +37,6 @@ html, body {
   transform-origin: 50% 100%;
   filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.18));
 }
-#dot {
-  position: absolute;
-  right: 6%;
-  bottom: 6%;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--off);
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85);
-  opacity: 0;
-  transition: opacity 0.25s, background 0.25s;
-}
-#stage.show-dot #dot { opacity: 1; }
-#stage.conn-connected #dot { background: var(--ok); }
-#stage.conn-connecting #dot, #stage.conn-reconnecting #dot { background: var(--warn); animation: blink 1s infinite; }
-#stage.conn-error #dot { background: var(--err); }
-#stage.conn-off #dot { background: var(--off); }
-
 #replyNotice {
   position: absolute;
   left: 7%;
@@ -141,8 +123,6 @@ html, body {
 @keyframes droop { 0% { transform: translateY(0) rotate(0); } 100% { transform: translateY(5px) rotate(-3deg) scale(0.98); } }
 @keyframes sag { 0% { transform: scale(1, 1); } 100% { transform: translateY(6px) scale(1.03, 0.94); } }
 @keyframes shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(4px); } }
-@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
-
 /* ---- quick chat input (only laid out while open, so the bubble sits right under the character) ---- */
 #chat {
   margin-top: 6px;

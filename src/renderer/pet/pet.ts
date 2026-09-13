@@ -193,8 +193,6 @@ function render(): void {
   stage.className = [
     `state-${state}`,
     fallback ? "fallback" : "",
-    `conn-${snapshot.connection}`,
-    settings?.openclawEnabled ? "show-dot" : "",
     ambient?.enabled ? "ambient" : "",
     fallback && BADGES[state] ? "badge" : "",
     chatOpen() ? "chat-open" : "",
