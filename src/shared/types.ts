@@ -166,6 +166,8 @@ export interface Settings {
   /** Bumped whenever keys change shape; the store migrates older files. */
   settingsVersion: number;
   openclawEnabled: boolean;
+  /** Whether the desktop character window is visible. The menu-bar icon always remains available. */
+  petVisible: boolean;
   launchAtLogin: boolean;
   alwaysOnTop: boolean;
   characterId: string;
@@ -181,7 +183,7 @@ export interface Settings {
   gateway: GatewaySettings;
 }
 
-export const SETTINGS_VERSION = 2;
+export const SETTINGS_VERSION = 3;
 
 export const AMBIENT_LIMITS = { intensity: { min: 0.2, max: 2.5 }, speed: { min: 0.25, max: 3 } } as const;
 export const BUBBLE_LIMITS = { width: { min: 160, max: 640 }, maxHeight: { min: 48, max: 640 } } as const;
@@ -190,6 +192,7 @@ export const HOLD_LIMITS = { min: 1000, max: 60_000 } as const;
 export const DEFAULT_SETTINGS: Settings = {
   settingsVersion: SETTINGS_VERSION,
   openclawEnabled: true,
+  petVisible: true,
   launchAtLogin: false,
   alwaysOnTop: true,
   characterId: "momo",
@@ -222,6 +225,20 @@ export interface QuickChatResult {
   error?: string;
 }
 
+/** Recent OpenClaw conversation shown in the quick-chat target popover. */
+export interface QuickChatSessionOption {
+  key: string;
+  label: string;
+  agentId?: string;
+  lastInteractionAt?: number;
+  selected?: boolean;
+}
+
+export interface QuickChatActionResult {
+  ok: boolean;
+  error?: string;
+}
+
 export interface ChatStatusUpdate {
   runId: string;
   phase: "sent" | "thinking" | "working" | "reply" | "error" | "aborted";
@@ -249,8 +266,11 @@ export const IPC = {
   pickImage: "dialog:pickImage",
   getConnection: "connection:get",
   listAgents: "connection:listAgents",
+  listSessions: "connection:listSessions",
+  setTargetSession: "connection:setTargetSession",
   getSnapshot: "pet:getSnapshot",
   sendQuickChat: "chat:send",
+  abortQuickChat: "chat:abort",
   dragStart: "pet:dragStart",
   dragEnd: "pet:dragEnd",
   setIgnoreMouse: "pet:setIgnoreMouse",

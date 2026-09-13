@@ -9,14 +9,16 @@
   "private": true,
   "scripts": {
     "build": "node scripts/build.mjs",
-    "watch": "node scripts/build.mjs --watch",
+    "build:app": "node scripts/build.mjs --app-only",
+    "build:prod": "node scripts/build.mjs --app-only --production",
+    "watch": "node scripts/build.mjs --watch --app-only",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "start": "npm run build && electron .",
+    "start": "npm run build:app && electron .",
     "test": "npm run build && node --test tests/",
     "probe": "npm run build && node dist/tools/probe.js",
-    "dist:mac": "npm run build && electron-builder --mac",
-    "dist:win": "npm run build && electron-builder --win",
-    "dist": "npm run build && electron-builder"
+    "dist:mac": "npm run build:prod && electron-builder --mac",
+    "dist:win": "npm run build:prod && electron-builder --win",
+    "dist": "npm run build:prod && electron-builder"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

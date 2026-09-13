@@ -8,7 +8,9 @@ import type {
   ConnectionInfo,
   PetSnapshot,
   PetState,
+  QuickChatActionResult,
   QuickChatResult,
+  QuickChatSessionOption,
   Settings,
 } from "../shared/types";
 import type { SettingsPatch } from "../main/settings-store";
@@ -65,9 +67,14 @@ const api = {
     onConnection: (l: Listener<ConnectionInfo>) => on(IPC.connectionChanged, l),
     /** Agent roster from the gateway (metadata-only, no tokens). Empty when not connected. */
     listAgents: (): Promise<AgentOption[]> => ipcRenderer.invoke(IPC.listAgents),
+    /** Recent conversations already known to the gateway. Metadata-only. */
+    listSessions: (agentId?: string): Promise<QuickChatSessionOption[]> => ipcRenderer.invoke(IPC.listSessions, agentId),
+    setTargetSession: (sessionKey: string | null): Promise<QuickChatActionResult> =>
+      ipcRenderer.invoke(IPC.setTargetSession, sessionKey),
     getSnapshot: (): Promise<PetSnapshot> => ipcRenderer.invoke(IPC.getSnapshot),
     onSnapshot: (l: Listener<PetSnapshot>) => on(IPC.snapshot, l),
     sendQuickChat: (text: string): Promise<QuickChatResult> => ipcRenderer.invoke(IPC.sendQuickChat, text),
+    abortQuickChat: (runId?: string): Promise<QuickChatActionResult> => ipcRenderer.invoke(IPC.abortQuickChat, runId),
     onChatStatus: (l: Listener<ChatStatusUpdate>) => on(IPC.chatStatus, l),
   },
   pet: {

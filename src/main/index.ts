@@ -18,6 +18,7 @@ import {
   petWindowBounds,
   type PetExtent,
 } from "./windows";
+import { recoverPositionToWorkAreas } from "./position";
 
 const log = (msg: string) => {
   if (process.env.OPENCLAW_PET_DEBUG) console.log(`[pet] ${msg}`);
@@ -27,7 +28,7 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on("second-instance", () => {
-    petWindow?.show();
+    if (petWindow) applySettings({ petVisible: true });
     openSettings();
   });
   void main();
@@ -40,6 +41,7 @@ let settingsStore: SettingsStore;
 let characters: CharacterLibrary;
 let controller: OpenClawController;
 let dragTimer: NodeJS.Timeout | null = null;
+let displayRecoveryTimer: NodeJS.Timeout | null = null;
 let quitting = false;
 /** Top-left of the base pet window (where the character is); the speech bubble may grow the window around it. */
 let petAnchor: { x: number; y: number } = { x: 0, y: 0 };
@@ -71,7 +73,7 @@ async function main(): Promise<void> {
   controller.on("snapshot", (snap) => broadcast(IPC.snapshot, snap));
   controller.on("connection", (info) => {
     broadcast(IPC.connectionChanged, info);
-    tray?.update({ connection: info });
+    updateTrayIdentity(info);
   });
   controller.on("chatStatus", (update) => petWindow?.webContents.send(IPC.chatStatus, update));
 
@@ -79,12 +81,7 @@ async function main(): Promise<void> {
   createPet();
   tray = new PetTray(assetsDir, {
     toggleOpenClaw: (enabled) => applySettings({ openclawEnabled: enabled }),
-    togglePet: () => {
-      if (!petWindow) return;
-      if (petWindow.isVisible()) petWindow.hide();
-      else petWindow.show();
-      tray?.update({ petVisible: petWindow.isVisible() });
-    },
+    togglePet: () => applySettings({ petVisible: !settingsStore.get().petVisible }),
     openSettings,
     quit: () => {
       quitting = true;
@@ -93,17 +90,37 @@ async function main(): Promise<void> {
   });
   applyControllerSettings(settingsStore.get());
   applyLoginItem(settingsStore.get().launchAtLogin);
-  tray.update({ enabled: settingsStore.get().openclawEnabled, connection: controller.getConnection() });
+  tray.update({
+    enabled: settingsStore.get().openclawEnabled,
+    connection: controller.getConnection(),
+    petVisible: settingsStore.get().petVisible,
+  });
+  updateTrayIdentity();
+  screen.on("display-added", schedulePetPositionRecovery);
+  screen.on("display-removed", schedulePetPositionRecovery);
+  screen.on("display-metrics-changed", schedulePetPositionRecovery);
   scheduleDebugCapture();
 
-  app.on("activate", () => petWindow?.show());
+  app.on("activate", () => {
+    if (petWindow) applySettings({ petVisible: true });
+  });
   app.on("before-quit", () => {
     quitting = true;
+    if (displayRecoveryTimer) clearTimeout(displayRecoveryTimer);
     controller.dispose();
   });
   app.on("window-all-closed", () => {
     // Tray app: keep running unless the user chose Quit.
     if (quitting) app.quit();
+  });
+}
+
+function updateTrayIdentity(connection = controller?.getConnection()): void {
+  const active = characters?.get(settingsStore?.get().characterId);
+  tray?.update({
+    ...(connection ? { connection } : {}),
+    characterName: active?.name ?? "No character",
+    targetAgentId: connection?.targetSession?.agentId ?? active?.agentId ?? null,
   });
 }
 
@@ -121,6 +138,7 @@ function createPet(): void {
     html: join(rendererDir, "pet", "index.html"),
     size: s.size,
     alwaysOnTop: s.alwaysOnTop,
+    visible: s.petVisible,
     position: s.position,
   });
   const [ax, ay] = petWindow.getPosition();
@@ -147,6 +165,22 @@ function layoutPet(): void {
   if (cx === bounds.x && cy === bounds.y && cw === bounds.width && ch === bounds.height) return;
   lastProgrammaticPos = { x: bounds.x, y: bounds.y };
   petWindow.setBounds(bounds);
+}
+
+function schedulePetPositionRecovery(): void {
+  if (displayRecoveryTimer) clearTimeout(displayRecoveryTimer);
+  displayRecoveryTimer = setTimeout(() => {
+    displayRecoveryTimer = null;
+    if (!petWindow || petWindow.isDestroyed()) return;
+    const { width, height } = petWindowBounds(settingsStore.get().size);
+    const next = recoverPositionToWorkAreas(petAnchor, width, height, screen.getAllDisplays().map((display) => display.workArea));
+    if (next.x !== petAnchor.x || next.y !== petAnchor.y) {
+      petAnchor = next;
+      settingsStore.update({ position: petAnchor });
+      log(`display layout changed; recovered pet to ${next.x},${next.y}`);
+    }
+    layoutPet();
+  }, 180);
 }
 
 function openSettings(): void {
@@ -236,7 +270,11 @@ function scheduleDebugCapture(): void {
   };
   const scrollSettingsTo = async (selector: string) => {
     if (!settingsWindow || settingsWindow.isDestroyed()) return;
-    await settingsWindow.webContents.executeJavaScript(`document.querySelector(${JSON.stringify(selector)})?.scrollIntoView({ block: "start" })`).catch(() => undefined);
+    await settingsWindow.webContents
+      .executeJavaScript(
+        `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return; let p = el.parentElement; while (p) { if (p.tagName === "DETAILS") p.open = true; p = p.parentElement; } el.scrollIntoView({ block: "start" }); })()`,
+      )
+      .catch(() => undefined);
     await new Promise((r) => setTimeout(r, 300));
   };
   // OPENCLAW_PET_CAPTURE_EVAL / _EVAL_END: JS run in the pet page before the first / after the last shot.
@@ -247,6 +285,8 @@ function scheduleDebugCapture(): void {
   };
   setTimeout(async () => {
     await evalInPet("start", process.env.OPENCLAW_PET_CAPTURE_EVAL);
+    // Let style/layout and the transparent window resize settle after a debug interaction.
+    await new Promise((r) => setTimeout(r, 300));
     await snap("pet", petWindow);
     await snap("settings", settingsWindow);
     await scrollSettingsTo("#assets");
@@ -258,10 +298,10 @@ function scheduleDebugCapture(): void {
     for (let i = 1; i <= shots; i += 1) {
       await new Promise((r) => setTimeout(r, 3000));
       if (i === collapseAt && petWindow && !petWindow.isDestroyed()) {
-        // Simulate a click on the bubble (mousedown + click, no movement) to toggle the pill.
+        // Use the explicit collapse control, mirroring the real UI.
         await petWindow.webContents
           .executeJavaScript(
-            "(() => { const b = document.getElementById('bubble'); if (!b || b.hidden) return 'no bubble'; for (const t of ['mousedown','click']) b.dispatchEvent(new MouseEvent(t, { bubbles: true, clientX: 10, clientY: 10, button: 0 })); return b.className; })()",
+            "(() => { const b = document.getElementById('bubble'); if (!b || b.hidden) return 'no bubble'; document.getElementById('bubbleToggle')?.click(); return b.className; })()",
           )
           .then((r) => log(`debug: toggled bubble → ${r}`))
           .catch((e) => log(`debug: toggle failed ${e}`));
@@ -286,9 +326,14 @@ function applySettings(patch: SettingsPatch): Settings {
     layoutPet();
   }
   if (petWindow && next.alwaysOnTop !== before.alwaysOnTop) applyAlwaysOnTop(petWindow, next.alwaysOnTop);
+  if (petWindow && next.petVisible !== before.petVisible) {
+    if (next.petVisible) petWindow.showInactive();
+    else petWindow.hide();
+  }
   if (next.launchAtLogin !== before.launchAtLogin) applyLoginItem(next.launchAtLogin);
   applyControllerSettings(next);
-  tray?.update({ enabled: next.openclawEnabled });
+  tray?.update({ enabled: next.openclawEnabled, petVisible: next.petVisible });
+  updateTrayIdentity();
   broadcast(IPC.settingsChanged, next);
   return next;
 }
@@ -307,6 +352,7 @@ function registerIpc(): void {
   ipcMain.handle(IPC.renameCharacter, (_e, id: string, name: string) => {
     const c = characters.rename(id, name);
     broadcast(IPC.charactersChanged, characters.list());
+    updateTrayIdentity();
     return c;
   });
   ipcMain.handle(IPC.deleteCharacter, (_e, id: string) => {
@@ -324,6 +370,7 @@ function registerIpc(): void {
     const c = characters.setAgent(id, agentId);
     broadcast(IPC.charactersChanged, characters.list());
     applyTargetAgent();
+    updateTrayIdentity();
     return c;
   });
   ipcMain.handle(IPC.addCharacterAssetVariant, (_e, id: string, state: PetState, imagePath: string) => {
@@ -366,10 +413,16 @@ function registerIpc(): void {
 
   ipcMain.handle(IPC.getConnection, () => controller.getConnection());
   ipcMain.handle(IPC.listAgents, () => controller.listAgents());
+  ipcMain.handle(IPC.listSessions, (_e, agentId?: string) => controller.listSessions(agentId));
+  ipcMain.handle(IPC.setTargetSession, (_e, sessionKey: string | null) => controller.setTargetSession(sessionKey));
   ipcMain.handle(IPC.getSnapshot, () => controller.getSnapshot());
   ipcMain.handle(IPC.sendQuickChat, (_e, text: string) => {
     if (process.env.OPENCLAW_PET_TEST_DRY) return fakeQuickChat(text);
     return controller.sendQuickChat(text);
+  });
+  ipcMain.handle(IPC.abortQuickChat, (_e, runId?: string) => {
+    if (process.env.OPENCLAW_PET_TEST_DRY) return fakeAbortQuickChat(runId);
+    return controller.abortQuickChat(runId);
   });
 
   ipcMain.handle(IPC.dragStart, (_e, offsetX: number, offsetY: number) => {
@@ -428,24 +481,43 @@ function registerIpc(): void {
  * Dev-only stand-in for chat.send (OPENCLAW_PET_TEST_DRY=1): plays the same chat status sequence the
  * gateway would produce, without any network or tokens, so the bubble/window logic can be exercised.
  */
+const fakeQuickChatTimers = new Map<string, NodeJS.Timeout[]>();
+
 function fakeQuickChat(text: string): { ok: boolean; runId: string } {
   const runId = `dry-${Date.now()}`;
   const send = (update: unknown) => petWindow?.webContents.send(IPC.chatStatus, update);
+  const timers: NodeJS.Timeout[] = [];
+  const schedule = (delay: number, update: unknown, terminal = false) => {
+    timers.push(setTimeout(() => {
+      send(update);
+      if (terminal) fakeQuickChatTimers.delete(runId);
+    }, delay));
+  };
   log(`dry run: pretending to send "${text}"`);
-  setTimeout(() => send({ runId, phase: "sent" }), 100);
-  setTimeout(() => send({ runId, phase: "working" }), 1500);
-  setTimeout(() => send({ runId, phase: "thinking", text: "Sure! Here is a longer sample reply so the bubble has something to" }), 3000);
-  setTimeout(
-    () =>
-      send({
-        runId,
-        phase: "reply",
-        text:
-          "Sure! Here is a longer sample reply so the bubble has something to show: the three points are tabs, spaces, and the fact that people will argue about them forever. Anyway, all done ✅",
-      }),
+  schedule(100, { runId, phase: "sent" });
+  schedule(1500, { runId, phase: "working" });
+  schedule(3000, { runId, phase: "thinking", text: "Sure! Here is a longer sample reply so the bubble has something to" });
+  schedule(
     4500,
+    {
+      runId,
+      phase: "reply",
+      text:
+        "Here is the result:\n\n- Links such as [OpenClaw](https://openclaw.ai) stay clickable.\n- Inline `code` stays compact.\n\n```ts\nconst target = characters.find((item) => item.agentId === agentId);\nconsole.log(target?.name);\n```\n\nAll done ✅",
+    },
+    true,
   );
+  fakeQuickChatTimers.set(runId, timers);
   return { ok: true, runId };
+}
+
+function fakeAbortQuickChat(runId?: string): { ok: boolean; error?: string } {
+  const id = runId ?? [...fakeQuickChatTimers.keys()].at(-1);
+  if (!id || !fakeQuickChatTimers.has(id)) return { ok: false, error: "That reply is no longer running." };
+  for (const timer of fakeQuickChatTimers.get(id) ?? []) clearTimeout(timer);
+  fakeQuickChatTimers.delete(id);
+  petWindow?.webContents.send(IPC.chatStatus, { runId: id, phase: "aborted" });
+  return { ok: true };
 }
 
 function stopDrag(): void {

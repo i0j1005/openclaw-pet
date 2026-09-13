@@ -97,9 +97,9 @@ export class CharacterLibrary {
     const dir = join(this.root, id);
     mkdirSync(dir, { recursive: true });
     const manifest: CharacterManifest = { id, name: name.trim() || "Character", assets: {} };
-    if (agentId?.trim()) manifest.agentId = agentId.trim();
     this.writeManifest(manifest);
-    return this.addAssetVariant(id, "idle", idleImagePath);
+    const character = this.addAssetVariant(id, "idle", idleImagePath);
+    return agentId?.trim() ? this.setAgent(id, agentId) : character;
   }
 
   rename(id: string, name: string): Character {
@@ -109,12 +109,27 @@ export class CharacterLibrary {
     return this.read(id)!;
   }
 
-  /** Binds the character to one OpenClaw agent; an empty id restores "any agent, most recent session". */
+  /**
+   * Binds one character to one OpenClaw agent. An agent owns at most one character, so assigning it
+   * here clears the same binding from another character. An empty id restores "any agent".
+   */
   setAgent(id: string, agentId: string | null | undefined): Character {
     const m = this.manifest(id);
     const next = agentId?.trim() || undefined;
-    if (next) m.agentId = next;
-    else delete m.agentId;
+    if (next) {
+      for (const otherId of readdirSync(this.root)) {
+        if (otherId === id) continue;
+        try {
+          const other = this.manifest(otherId);
+          if (other.agentId !== next) continue;
+          delete other.agentId;
+          this.writeManifest(other);
+        } catch {
+          // Broken character folders are ignored by list() too.
+        }
+      }
+      m.agentId = next;
+    } else delete m.agentId;
     this.writeManifest(m);
     return this.read(id)!;
   }
@@ -135,7 +150,8 @@ export class CharacterLibrary {
     }
     const assets: CharacterManifest["assets"] = {};
     for (const [state, files] of Object.entries(src.assets)) assets[state as PetState] = [...(files ?? [])];
-    this.writeManifest({ id: newId, name: `${src.name} copy`, assets, ...(src.agentId ? { agentId: src.agentId } : {}) });
+    // Agent assignments are one-to-one; a duplicate starts unassigned instead of stealing it.
+    this.writeManifest({ id: newId, name: `${src.name} copy`, assets });
     return this.read(newId)!;
   }
 
@@ -236,11 +252,11 @@ export class CharacterLibrary {
     if (!assets.idle?.length) throw new Error("The folder needs at least an idle image (idle.png / idle.gif / …).");
     const id = this.uniqueId(slugify(name) || "character");
     mkdirSync(join(this.root, id), { recursive: true });
-    this.writeManifest({ id, name, assets: {}, ...(agentId ? { agentId } : {}) });
+    this.writeManifest({ id, name, assets: {} });
     for (const [state, sources] of Object.entries(assets)) {
       for (const src of sources ?? []) this.addAssetVariant(id, state as PetState, src);
     }
-    return this.read(id)!;
+    return agentId ? this.setAgent(id, agentId) : this.read(id)!;
   }
 
   dir(id: string): string {

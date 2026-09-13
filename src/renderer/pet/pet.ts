@@ -4,35 +4,57 @@ import {
   AMBIENT_STATES,
   BUBBLE_LIMITS,
   STATE_FALLBACKS,
+  type AgentOption,
   type AmbientState,
   type Character,
   type ChatStatusUpdate,
   type ConnectionInfo,
   type PetSnapshot,
   type PetState,
+  type QuickChatSessionOption,
   type Settings,
 } from "../../shared/types";
+import { renderLimitedMarkdown } from "./markdown";
 
 const api = window.pet;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const stage = $<HTMLDivElement>("stage");
 const charEl = $<HTMLDivElement>("char");
+const replyNotice = $<HTMLButtonElement>("replyNotice");
 const img = $<HTMLImageElement>("img");
 const badge = $<HTMLDivElement>("badge");
 const chat = $<HTMLDivElement>("chat");
 const chatForm = $<HTMLFormElement>("chatForm");
-const chatInput = $<HTMLInputElement>("chatInput");
+const chatInput = $<HTMLTextAreaElement>("chatInput");
+const chatSend = $<HTMLButtonElement>("chatSend");
+const chatTarget = $<HTMLButtonElement>("chatTarget");
+const targetPopover = $<HTMLDivElement>("targetPopover");
+const targetClose = $<HTMLButtonElement>("targetClose");
+const targetCharacter = $<HTMLSelectElement>("targetCharacter");
+const targetAgent = $<HTMLSelectElement>("targetAgent");
+const targetSession = $<HTMLSelectElement>("targetSession");
+const targetHint = $<HTMLDivElement>("targetHint");
 const bubble = $<HTMLDivElement>("bubble");
+const bubbleBody = $<HTMLDivElement>("bubbleBody");
 const bubbleUser = $<HTMLDivElement>("bubbleUser");
 const bubbleReply = $<HTMLDivElement>("bubbleReply");
-const bubblePill = $<HTMLDivElement>("bubblePill");
+const bubbleStatus = $<HTMLSpanElement>("bubbleStatus");
+const bubblePill = $<HTMLButtonElement>("bubblePill");
+const bubblePrimary = $<HTMLButtonElement>("bubblePrimary");
+const bubbleEdit = $<HTMLButtonElement>("bubbleEdit");
+const bubbleCopy = $<HTMLButtonElement>("bubbleCopy");
+const bubbleToggle = $<HTMLButtonElement>("bubbleToggle");
+const bubbleClose = $<HTMLButtonElement>("bubbleClose");
 const bubbleGrip = $<HTMLDivElement>("bubbleGrip");
 
 /** Must match PET_PAD in src/main/windows.ts (the stage padding). */
 const PAD = 12;
+const CHAT_WIDTH = 360;
 
 let settings: Settings | null = null;
 let character: Character | null = null;
+let allCharacters: Character[] = [];
+let agents: AgentOption[] = [];
 let snapshot: PetSnapshot = { activity: "idle", reaction: null, connection: "off" };
 let connection: ConnectionInfo = { status: "off" };
 
@@ -45,6 +67,8 @@ let pressStart: { x: number; y: number } | null = null;
 let ignoringMouse = false;
 let chatHideTimer: number | null = null;
 let chatOverride = false; // opened by click; stays until Esc / blur
+let targetPopoverOpen = false;
+let targetRefreshId = 0;
 let currentSrc = "";
 
 // speech bubble state (last exchange; stays until the next message is sent)
@@ -56,7 +80,8 @@ let bubbleState: { visible: boolean; user: string; reply: string; phase: BubbleP
   phase: "reply",
 };
 let resizing: { startX: number; startY: number; w: number; h: number } | null = null;
-let bubblePress: { x: number; y: number } | null = null;
+let replyNoticeVisible = false;
+let bubbleActionBusy = false;
 
 const BADGES: Partial<Record<PetState, string>> = {
   thinking: "…",
@@ -175,6 +200,9 @@ function render(): void {
     .filter(Boolean)
     .join(" ");
   badge.textContent = BADGES[state] ?? "";
+  renderChatTarget();
+  renderReplyNotice();
+  chatSend.disabled = chatInput.disabled || !chatInput.value.trim();
   requestExtent();
 }
 
@@ -189,6 +217,7 @@ function applySettings(s: Settings): void {
   }
   bubble.classList.toggle("collapsed", s.bubble.collapsed);
   render();
+  resizeChatInput();
 }
 
 // ---- window extent (the main process grows the transparent window to fit the bubble) ------------
@@ -201,7 +230,10 @@ function requestExtent(): void {
     extentRaf = 0;
     let bottom = charEl.getBoundingClientRect().bottom;
     let width = 0;
-    if (stage.classList.contains("chat-open")) bottom = Math.max(bottom, chat.getBoundingClientRect().bottom);
+    if (stage.classList.contains("chat-open")) {
+      bottom = Math.max(bottom, chat.getBoundingClientRect().bottom);
+      width = CHAT_WIDTH + PAD * 2;
+    }
     if (!bubble.hidden) {
       const r = bubble.getBoundingClientRect();
       bottom = Math.max(bottom, r.bottom);
@@ -214,15 +246,188 @@ function requestExtent(): void {
     void api.pet.setExtent(w, h);
   });
 }
-new ResizeObserver(() => requestExtent()).observe(bubble);
+const extentObserver = new ResizeObserver(() => requestExtent());
+extentObserver.observe(bubble);
+extentObserver.observe(chat);
 
 // ---- chat bar -------------------------------------------------------------------
 
 function chatOpen(): boolean {
   if (!settings) return false;
+  if (targetPopoverOpen) return true;
   if (chatOverride) return true;
   if (!settings.hoverChatEnabled) return false;
   return hovering || document.activeElement === chatInput || chatInput.value.trim().length > 0;
+}
+
+function renderChatTarget(): void {
+  const name = character?.name ?? "Character";
+  if (!settings?.openclawEnabled) {
+    chatTarget.textContent = `${name} · OpenClaw is off`;
+    chatTarget.title = "Enable OpenClaw in Settings or the menu bar";
+    return;
+  }
+  const target = connection.targetSession;
+  if (target?.agentId) chatTarget.textContent = `${name} → ${target.agentId}`;
+  else if (character?.agentId) chatTarget.textContent = `${name} → ${character.agentId}`;
+  else chatTarget.textContent = `${name} → most recent agent`;
+  chatTarget.title = target ? `Quick chat continues: ${target.label}` : "The destination will resolve after OpenClaw connects";
+}
+
+function renderReplyNotice(): void {
+  const pending = isBubblePending();
+  replyNotice.hidden = !replyNoticeVisible || bubbleState.visible || !bubbleState.user;
+  replyNotice.classList.toggle("pending", pending);
+  replyNotice.title = pending ? "Reply in progress · reopen" : "Reopen latest reply";
+}
+
+function isBubblePending(): boolean {
+  return bubbleState.phase === "sending" || bubbleState.phase === "thinking" || bubbleState.phase === "working";
+}
+
+function setTargetHint(text: string, error = false): void {
+  targetHint.textContent = text;
+  targetHint.classList.toggle("error", error);
+}
+
+function replaceOptions(select: HTMLSelectElement, options: Array<{ value: string; label: string }>, selected: string): void {
+  select.replaceChildren(
+    ...options.map(({ value, label }) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      option.selected = value === selected;
+      return option;
+    }),
+  );
+}
+
+function renderTargetChoices(sessions: QuickChatSessionOption[] = []): void {
+  replaceOptions(
+    targetCharacter,
+    allCharacters.map((item) => ({ value: item.id, label: item.name })),
+    character?.id ?? "",
+  );
+  const currentAgent = character?.agentId ?? "";
+  const knownAgents = agents.some((agent) => agent.id === currentAgent)
+    ? agents
+    : currentAgent
+      ? [...agents, { id: currentAgent, name: currentAgent }]
+      : agents;
+  replaceOptions(
+    targetAgent,
+    [
+      { value: "", label: "Any agent · most recent" },
+      ...knownAgents.map((agent) => ({ value: agent.id, label: `${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}${agent.isDefault ? " · default" : ""}` })),
+    ],
+    currentAgent,
+  );
+  const selectedSession = sessions.find((session) => session.selected)?.key ?? "";
+  replaceOptions(
+    targetSession,
+    [
+      { value: "", label: "Automatic · most recent" },
+      ...sessions.map((session) => ({
+        value: session.key,
+        label: `${session.label}${session.agentId && !currentAgent ? ` · ${session.agentId}` : ""}`,
+      })),
+    ],
+    selectedSession,
+  );
+  targetCharacter.disabled = allCharacters.length < 2;
+  targetAgent.disabled = connection.status !== "connected" && agents.length === 0;
+  targetSession.disabled = connection.status !== "connected" || sessions.length === 0;
+}
+
+async function refreshTargetPopover(): Promise<void> {
+  const refreshId = ++targetRefreshId;
+  setTargetHint("Loading destinations…");
+  try {
+    const [nextAgents, sessions] = await Promise.all([
+      api.openclaw.listAgents(),
+      api.openclaw.listSessions(character?.agentId),
+    ]);
+    if (refreshId !== targetRefreshId) return;
+    agents = nextAgents;
+    renderTargetChoices(sessions);
+    if (connection.status !== "connected") setTargetHint("Connect OpenClaw to choose an agent or session.");
+    else if (sessions.length === 0) setTargetHint("No recent sessions yet; quick chat will use the agent's main conversation.");
+    else setTargetHint("Character and agent bindings are saved. The exact session is temporary.");
+  } catch (err) {
+    if (refreshId !== targetRefreshId) return;
+    renderTargetChoices();
+    setTargetHint((err as Error).message || "Could not load destinations.", true);
+  }
+  requestExtent();
+}
+
+function closeTargetPopover(): void {
+  if (!targetPopoverOpen) return;
+  targetPopoverOpen = false;
+  targetPopover.hidden = true;
+  chatTarget.setAttribute("aria-expanded", "false");
+  render();
+}
+
+chatTarget.addEventListener("click", (event) => {
+  event.stopPropagation();
+  targetPopoverOpen = !targetPopoverOpen;
+  targetPopover.hidden = !targetPopoverOpen;
+  chatTarget.setAttribute("aria-expanded", String(targetPopoverOpen));
+  if (targetPopoverOpen) {
+    chatOverride = true;
+    renderTargetChoices();
+    void refreshTargetPopover();
+  }
+  render();
+});
+targetClose.addEventListener("click", closeTargetPopover);
+targetCharacter.addEventListener("change", async () => {
+  const next = await api.settings.update({ characterId: targetCharacter.value });
+  applySettings(next);
+  await loadCharacter();
+  await refreshTargetPopover();
+});
+targetAgent.addEventListener("change", async () => {
+  if (!character) return;
+  setTargetHint("Updating agent…");
+  try {
+    const next = await api.characters.setAgent(character.id, targetAgent.value || null);
+    setCharacter(next);
+    await refreshTargetPopover();
+  } catch (err) {
+    setTargetHint((err as Error).message || "Could not update the agent.", true);
+  }
+});
+targetSession.addEventListener("change", async () => {
+  const result = await api.openclaw.setTargetSession(targetSession.value || null);
+  if (!result.ok) {
+    setTargetHint(result.error ?? "Could not select that session.", true);
+    await refreshTargetPopover();
+    return;
+  }
+  connection = await api.openclaw.getConnection();
+  renderChatTarget();
+  setTargetHint(targetSession.value ? "This session is selected until the agent changes or the app restarts." : "Using the most recent matching session automatically.");
+});
+document.addEventListener("click", (event) => {
+  const target = event.target as Node | null;
+  if (targetPopoverOpen && target && !targetPopover.contains(target) && !chatTarget.contains(target)) closeTargetPopover();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && targetPopoverOpen) {
+    event.preventDefault();
+    closeTargetPopover();
+    chatInput.focus();
+  }
+});
+
+/** Grow from one to four lines, then scroll internally. */
+function resizeChatInput(): void {
+  chatInput.style.height = "0px";
+  chatInput.style.height = `${Math.min(88, Math.max(38, chatInput.scrollHeight))}px`;
+  chatSend.disabled = chatInput.disabled || !chatInput.value.trim();
+  requestExtent();
 }
 
 function scheduleChatHide(): void {
@@ -234,13 +439,19 @@ function scheduleChatHide(): void {
 }
 
 async function submitQuickChat(text: string): Promise<void> {
+  const message = text.trim();
+  if (!message) return;
   chatInput.value = "";
+  resizeChatInput();
   chatOverride = false;
+  closeTargetPopover();
   chatInput.blur();
-  bubbleState = { visible: true, user: text, reply: "", phase: "sending" };
+  replyNoticeVisible = false;
+  bubbleActionBusy = false;
+  bubbleState = { visible: true, user: message, reply: "", phase: "sending" };
   renderBubble();
   render();
-  const res = await api.openclaw.sendQuickChat(text);
+  const res = await api.openclaw.sendQuickChat(message);
   if (!res.ok) {
     bubbleState = { ...bubbleState, reply: res.error ?? "Could not send.", phase: "error" };
   } else if (bubbleState.phase === "sending") {
@@ -258,18 +469,32 @@ chatForm.addEventListener("submit", (e) => {
   void submitQuickChat(text);
 });
 chatInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    chatForm.requestSubmit();
+    return;
+  }
   if (e.key === "Escape") {
+    if (targetPopoverOpen) {
+      e.preventDefault();
+      closeTargetPopover();
+      return;
+    }
     chatInput.value = "";
+    resizeChatInput();
     chatOverride = false;
     chatInput.blur();
     render();
   }
 });
+chatInput.addEventListener("input", resizeChatInput);
 chatInput.addEventListener("blur", () => scheduleChatHide());
-chatInput.addEventListener("focus", () => render());
+chatInput.addEventListener("focus", () => {
+  render();
+  resizeChatInput();
+});
 
 api.openclaw.onChatStatus((u: ChatStatusUpdate) => {
-  if (!bubbleState.visible) return;
   if (bubbleState.runId && u.runId !== bubbleState.runId) return;
   switch (u.phase) {
     case "sent":
@@ -295,7 +520,9 @@ api.openclaw.onChatStatus((u: ChatStatusUpdate) => {
       bubbleState.reply = bubbleState.reply || "Stopped.";
       break;
   }
+  if (!bubbleState.visible) replyNoticeVisible = true;
   renderBubble();
+  renderReplyNotice();
 });
 
 // ---- speech bubble ---------------------------------------------------------------
@@ -303,19 +530,47 @@ api.openclaw.onChatStatus((u: ChatStatusUpdate) => {
 function renderBubble(): void {
   bubble.hidden = !bubbleState.visible;
   if (!bubbleState.visible) {
+    renderReplyNotice();
     requestExtent();
     return;
   }
-  const pending = bubbleState.phase === "sending" || bubbleState.phase === "thinking" || bubbleState.phase === "working";
+  const pending = isBubblePending();
   bubble.classList.toggle("err", bubbleState.phase === "error");
   bubble.classList.toggle("pending", pending && !bubbleState.reply);
+  bubble.dataset.phase = bubbleState.phase;
+  const phaseLabel: Record<BubblePhase, string> = {
+    sending: "Sending",
+    thinking: "Thinking",
+    working: "Working",
+    reply: "Reply",
+    error: "Error",
+    aborted: "Stopped",
+  };
+  bubbleStatus.textContent = phaseLabel[bubbleState.phase];
   bubbleUser.textContent = bubbleState.user;
   const placeholder =
     bubbleState.phase === "sending" ? "Sending" : bubbleState.phase === "working" ? "Working on it" : bubbleState.phase === "thinking" ? "Thinking" : "";
-  bubbleReply.textContent = bubbleState.reply || placeholder;
+  renderLimitedMarkdown(bubbleReply, bubbleState.reply || placeholder);
   const pillText = bubbleState.reply ? bubbleState.reply : placeholder ? `${placeholder}…` : "";
   bubblePill.textContent = pillText.replace(/\s+/g, " ").trim().slice(0, 80);
+  bubbleCopy.disabled = !bubbleState.reply;
+  bubbleCopy.hidden = !bubbleState.reply;
+  bubblePrimary.hidden = !(pending || bubbleState.phase === "error" || bubbleState.phase === "aborted");
+  bubblePrimary.textContent = pending ? "Stop" : "Retry";
+  bubblePrimary.title = pending ? "Stop this reply" : "Send the same question again";
+  bubblePrimary.className = pending ? "stop" : "retry";
+  bubblePrimary.disabled = bubbleActionBusy || (pending && !bubbleState.runId);
+  bubbleEdit.hidden = pending || !bubbleState.user;
+  bubbleEdit.disabled = bubbleActionBusy;
+  const collapsed = Boolean(settings?.bubble.collapsed);
+  bubbleToggle.textContent = collapsed ? "+" : "−";
+  bubbleToggle.title = collapsed ? "Expand reply" : "Collapse reply";
+  bubbleToggle.setAttribute("aria-label", bubbleToggle.title);
+  if (pending && bubbleBody.scrollHeight - bubbleBody.scrollTop - bubbleBody.clientHeight < 36) {
+    bubbleBody.scrollTop = bubbleBody.scrollHeight;
+  }
   requestExtent();
+  renderReplyNotice();
 }
 
 function toggleBubbleCollapsed(): void {
@@ -323,21 +578,62 @@ function toggleBubbleCollapsed(): void {
   const collapsed = !settings.bubble.collapsed;
   bubble.classList.toggle("collapsed", collapsed);
   settings.bubble.collapsed = collapsed;
-  requestExtent();
+  renderBubble();
   void api.settings.update({ bubble: { collapsed } });
 }
 
-bubble.addEventListener("mousedown", (e) => {
-  if (e.button !== 0 || e.target === bubbleGrip) return;
-  bubblePress = { x: e.clientX, y: e.clientY };
+bubbleToggle.addEventListener("click", toggleBubbleCollapsed);
+bubblePill.addEventListener("click", toggleBubbleCollapsed);
+bubbleClose.addEventListener("click", () => {
+  bubbleState.visible = false;
+  replyNoticeVisible = true;
+  renderBubble();
+  render();
 });
-bubble.addEventListener("click", (e) => {
-  if (e.target === bubbleGrip || !bubblePress) return;
-  const moved = Math.hypot(e.clientX - bubblePress.x, e.clientY - bubblePress.y) > 4;
-  bubblePress = null;
-  // A drag inside the bubble is a text selection, not a toggle.
-  if (moved || (window.getSelection()?.toString().length ?? 0) > 0) return;
-  toggleBubbleCollapsed();
+replyNotice.addEventListener("mousedown", (event) => event.stopPropagation());
+replyNotice.addEventListener("click", (event) => {
+  event.stopPropagation();
+  bubbleState.visible = true;
+  replyNoticeVisible = false;
+  renderBubble();
+  render();
+});
+bubblePrimary.addEventListener("click", async () => {
+  if (bubbleActionBusy) return;
+  if (!isBubblePending()) {
+    await submitQuickChat(bubbleState.user);
+    return;
+  }
+  if (!bubbleState.runId) return;
+  bubbleActionBusy = true;
+  renderBubble();
+  const result = await api.openclaw.abortQuickChat(bubbleState.runId);
+  bubbleActionBusy = false;
+  if (!result.ok) {
+    bubbleState.phase = "error";
+    bubbleState.reply = result.error ?? "Could not stop that reply.";
+  }
+  renderBubble();
+});
+bubbleEdit.addEventListener("click", () => {
+  chatInput.value = bubbleState.user;
+  chatOverride = true;
+  closeTargetPopover();
+  resizeChatInput();
+  render();
+  chatInput.focus();
+  chatInput.setSelectionRange(chatInput.value.length, chatInput.value.length);
+});
+bubbleCopy.addEventListener("click", async () => {
+  if (!bubbleState.reply) return;
+  try {
+    await navigator.clipboard.writeText(bubbleState.reply);
+    bubbleCopy.textContent = "Copied";
+    window.setTimeout(() => (bubbleCopy.textContent = "Copy"), 1200);
+  } catch {
+    bubbleCopy.textContent = "Copy failed";
+    window.setTimeout(() => (bubbleCopy.textContent = "Copy"), 1600);
+  }
 });
 
 bubbleGrip.addEventListener("mousedown", (e) => {
@@ -472,6 +768,7 @@ api.pet.onDebugSubmit((text) => {
 async function loadCharacter(): Promise<void> {
   if (!settings) return;
   const all = await api.characters.list();
+  allCharacters = all;
   setCharacter(all.find((c) => c.id === settings!.characterId) ?? all[0] ?? null);
 }
 
@@ -492,7 +789,9 @@ api.settings.onChange((s) => {
   if (characterChanged) void loadCharacter();
 });
 api.characters.onChange((all) => {
+  allCharacters = all;
   setCharacter(all.find((c) => c.id === settings?.characterId) ?? all[0] ?? null);
+  if (targetPopoverOpen) void refreshTargetPopover();
 });
 api.openclaw.onSnapshot((snap) => {
   snapshot = snap;
@@ -502,6 +801,7 @@ api.openclaw.onConnection((info) => {
   connection = info;
   snapshot = { ...snapshot, connection: info.status };
   render();
+  if (targetPopoverOpen) void refreshTargetPopover();
 });
 
 (async () => {

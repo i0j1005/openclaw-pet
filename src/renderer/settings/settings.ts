@@ -39,7 +39,10 @@ function toast(text: string, ms = 2600): void {
 
 function fileUrl(path: string): string {
   const normalized = path.replace(/\\/g, "/");
-  return `file://${normalized.startsWith("/") ? "" : "/"}${encodeURI(normalized).replace(/#/g, "%23")}?v=${Date.now()}`;
+  // CharacterLibrary gives every newly added asset a unique file name, so the path itself is a
+  // reliable cache key. A timestamp here made every unrelated settings change reload and decode
+  // every thumbnail in the character library.
+  return `file://${normalized.startsWith("/") ? "" : "/"}${encodeURI(normalized).replace(/#/g, "%23").replace(/\?/g, "%3F")}`;
 }
 
 function current(): Character | undefined {
@@ -47,8 +50,9 @@ function current(): Character | undefined {
 }
 
 async function save(patch: SettingsPatch): Promise<void> {
-  settings = await api.settings.update(patch);
-  renderSettings();
+  // The main process broadcasts the normalized value back through settings.onChange. Rendering
+  // here as well rebuilt the full settings page twice for every click.
+  await api.settings.update(patch);
 }
 
 function bindSwitch(id: keyof Settings): void {
@@ -58,7 +62,7 @@ function bindSwitch(id: keyof Settings): void {
 
 // ---- rendering ------------------------------------------------------------------
 
-function renderSettings(): void {
+function renderSettings(renderCharacter = true): void {
   $<HTMLInputElement>("openclawEnabled").checked = settings.openclawEnabled;
   $<HTMLInputElement>("launchAtLogin").checked = settings.launchAtLogin;
   $<HTMLInputElement>("alwaysOnTop").checked = settings.alwaysOnTop;
@@ -73,8 +77,12 @@ function renderSettings(): void {
   $<HTMLInputElement>("gwToken").value = settings.gateway.token ?? "";
   $<HTMLInputElement>("gwPassword").value = settings.gateway.password ?? "";
   $<HTMLInputElement>("gwUrl").disabled = settings.gateway.mode !== "manual";
-  renderCharacterSelect();
-  renderAssets();
+  // Character controls and thumbnails only depend on characterId. Avoid rebuilding them for an
+  // unrelated toggle, duration, bubble-size, or connection setting.
+  if (renderCharacter) {
+    renderCharacterSelect();
+    renderAssets();
+  }
 }
 
 function renderConnection(info: ConnectionInfo): void {
@@ -151,6 +159,85 @@ function renderAgentSelects(): void {
   else hint.textContent = "Any agent: the quick chat continues the most recent conversation, whoever it was with.";
   const addSelect = $<HTMLSelectElement>("addAgent");
   fillAgentSelect(addSelect, addSelect.value || undefined);
+  renderAgentAssignments();
+}
+
+/** Agent-first view of the same one-to-one bindings stored in each character manifest. */
+function renderAgentAssignments(): void {
+  const container = $("agentAssignments");
+  container.innerHTML = "";
+  const options = new Map<string, AgentOption>();
+  for (const agent of agents ?? []) options.set(agent.id, agent);
+  for (const c of characters) {
+    if (c.agentId && !options.has(c.agentId)) options.set(c.agentId, { id: c.agentId, name: c.agentId });
+  }
+  if (!options.size) {
+    const empty = document.createElement("div");
+    empty.className = "assignment-empty";
+    empty.textContent = connected
+      ? "No configurable agents were returned by OpenClaw."
+      : "Connect OpenClaw to discover agents. Saved assignments will still appear here.";
+    container.appendChild(empty);
+    return;
+  }
+
+  for (const agent of options.values()) {
+    const assigned = characters.find((c) => c.agentId === agent.id);
+    const row = document.createElement("div");
+    row.className = "assignment-row";
+    const identity = document.createElement("div");
+    identity.className = "assignment-agent";
+    const name = document.createElement("strong");
+    name.textContent = `${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}${agent.isDefault ? " · default" : ""}`;
+    const id = document.createElement("span");
+    id.textContent = agent.id;
+    identity.append(name, id);
+
+    const select = document.createElement("select");
+    select.setAttribute("aria-label", `Character for ${agent.name}`);
+    const unassigned = document.createElement("option");
+    unassigned.value = "";
+    unassigned.textContent = "No character assigned";
+    select.appendChild(unassigned);
+    for (const c of characters) {
+      const opt = document.createElement("option");
+      opt.value = c.id;
+      opt.textContent = c.agentId && c.agentId !== agent.id ? `${c.name} · currently ${c.agentId}` : c.name;
+      select.appendChild(opt);
+    }
+    select.value = assigned?.id ?? "";
+    select.disabled = characters.length === 0;
+    const choice = document.createElement("div");
+    choice.className = "assignment-choice";
+    const preview = document.createElement("img");
+    preview.alt = "";
+    const renderPreview = (characterId: string) => {
+      const src = characters.find((c) => c.id === characterId)?.assets.idle?.[0];
+      if (src) {
+        preview.src = fileUrl(src);
+        preview.hidden = false;
+      } else {
+        preview.removeAttribute("src");
+        preview.hidden = true;
+      }
+    };
+    renderPreview(select.value);
+    select.addEventListener("change", async () => {
+      select.disabled = true;
+      const characterId = select.value;
+      renderPreview(characterId);
+      if (characterId) {
+        const c = characters.find((item) => item.id === characterId);
+        await guard(() => api.characters.setAgent(characterId, agent.id), `${agent.name} now uses ${c?.name ?? characterId}`);
+      } else if (assigned) {
+        await guard(() => api.characters.setAgent(assigned.id, null), `${agent.name} is no longer assigned`);
+      }
+      select.disabled = false;
+    });
+    choice.append(preview, select);
+    row.append(identity, choice);
+    container.appendChild(row);
+  }
 }
 
 // Per-state ambient motion rows are built once; afterwards only their values are refreshed so a
@@ -269,12 +356,12 @@ function renderAssets(): void {
           .map(
             (p, i) => `
           <div class="variant" title="${escapeAttr(p.split(/[\\/]/).pop() ?? "")}">
-            <img alt="" src="${fileUrl(p)}">
+            <img alt="" loading="lazy" decoding="async" src="${fileUrl(p)}">
             <button class="remove" data-index="${i}" title="Remove this image" aria-label="Remove ${STATE_LABELS[state]} image ${i + 1}" ${canRemove ? "" : "disabled"}>×</button>
           </div>`,
           )
           .join("")}
-        ${!own.length && fb ? `<div class="variant ghost" title="Fallback"><img alt="" src="${fileUrl(c.assets[fb]![0])}"></div>` : ""}
+        ${!own.length && fb ? `<div class="variant ghost" title="Fallback"><img alt="" loading="lazy" decoding="async" src="${fileUrl(c.assets[fb]![0])}"></div>` : ""}
         <button class="variant add" title="Add an image (or drop files on this row)">＋<span>Add</span></button>
       </div>`;
     row.querySelector<HTMLButtonElement>(".add")!.addEventListener("click", async () => {
@@ -429,8 +516,9 @@ $("gwSave").addEventListener("click", async () => {
 $("quitBtn").addEventListener("click", () => void api.app.quit());
 
 api.settings.onChange((s) => {
+  const characterChanged = s.characterId !== settings?.characterId;
   settings = s;
-  renderSettings();
+  renderSettings(characterChanged);
 });
 api.characters.onChange((all) => {
   characters = all;

@@ -4,19 +4,19 @@
   <img src="assets/icon.png" alt="OpenClaw Pet icon" width="128">
 </p>
 
-OpenClaw Pet is a small desktop companion for [OpenClaw](https://github.com/openclaw/openclaw). It stays above your windows, reacts to agent activity, and provides a one-line quick chat without turning into another full chat client.
+OpenClaw Pet is a small desktop companion for [OpenClaw](https://github.com/openclaw/openclaw). It stays above your windows, reacts to agent activity, and provides a compact quick chat without turning into another full chat client.
 
 > The current build is tested on macOS. Windows packaging is configured, but the Windows runtime has not yet been verified on a Windows machine.
 
 ## What it does
 
 - Finds a local OpenClaw Gateway automatically and reconnects when needed.
-- Continues the most recently used OpenClaw session from a compact hover chat.
+- Continues the most recently used OpenClaw session from a compact hover chat, with direct character, agent, and recent-session targeting.
 - Binds individual characters to specific OpenClaw agents when desired.
 - Shows thinking, working, success, error, question, and other reaction states from Gateway events and local text rules.
 - Supports several images per state and picks a different variant when that state begins.
 - Lets you add, rename, duplicate, import, and edit characters from Settings.
-- Handles dragging, resizing, always-on-top behavior, launch at login, and optional ambient motion.
+- Handles dragging, resizing, always-on-top behavior, launch at login, multi-monitor position recovery, and optional ambient motion.
 
 Only a message submitted through quick chat starts an agent turn. Mouse interactions, animations, settings, and reaction classification stay local and do not use model tokens.
 
@@ -64,17 +64,21 @@ The device is listed as `OpenClaw Pet`.
 | Action | How |
 | --- | --- |
 | Move | Drag the character. Its position is remembered. |
-| Quick chat | Hover or click the character, type a message, and press Enter. |
-| Collapse a reply | Click the speech bubble. Click the pill to expand it again. |
+| Quick chat | Hover or click the character. Enter sends; Shift+Enter adds a line. Click the destination label to choose a character, agent, or recent session. |
+| Manage a run | Use **Stop** while a reply is running, or **Retry** after an error or stopped run. |
+| Reuse a question | Choose **Edit & resend** below a finished reply to put the previous question back into the input. |
+| Manage a reply | Use the bubble's Copy, collapse, and close buttons. A notification dot beside the character reopens a closed latest reply. |
 | Resize a reply | Drag the grip at the bottom-right of the speech bubble. |
 | Open Settings | Right-click the character or use the tray menu. |
-| Hide or show | Use the tray menu. |
+| Hide or show | Use the tray/menu-bar item. The choice is remembered across launches. |
 
 The status dot is green when connected, amber while connecting, red when attention is needed, and grey when OpenClaw is disabled.
 
 ### Choosing an agent
 
-Each character can target one OpenClaw agent. Select it in **Settings → Character → Agent**. Leaving the value at **Any agent** preserves the default behavior: quick chat continues the most recently active user session.
+Each agent can have one character, and each character targets at most one agent. Manage the whole mapping under **Settings → Characters → Agent characters**, change only the selected character with **This character's agent**, or click the target label above quick chat. Reassigning an agent moves it from its previous character. Leaving a character at **Any agent** preserves the default behavior: quick chat continues the most recently active user session. An exact recent-session selection lasts until the agent changes or the app restarts.
+
+Replies render a deliberately limited Markdown subset: links, ordered and unordered lists, inline code, and fenced code blocks. Code blocks scroll horizontally and include their own **Copy code** button; raw HTML and other Markdown formatting are displayed as plain text.
 
 ## Characters and assets
 
@@ -129,7 +133,9 @@ Use **Settings → Character → Show files** to open the folder directly.
 | Command | Purpose |
 | --- | --- |
 | `npm start` | Build and launch the app |
-| `npm run build` | Bundle the Electron processes and renderers into `dist/` |
+| `npm run build` | Build the app, tests, and diagnostic tool with source maps |
+| `npm run build:app` | Build only the development app with source maps |
+| `npm run build:prod` | Build only the minified production app |
 | `npm run typecheck` | Run TypeScript checks without emitting files |
 | `npm test` | Build and run the unit tests |
 | `npm run probe` | Inspect Gateway discovery and sessions without starting an agent turn |

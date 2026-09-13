@@ -14,8 +14,10 @@
         <div id="connBadge" class="conn conn-off"><span class="dot"></span><span id="connText">OpenClaw off</span></div>
       </header>
 
-      <section>
-        <h2>General</h2>
+      <section class="fold-section">
+        <details class="settings-fold" open>
+          <summary><span><h2>General</h2><span class="summary-note">Connection and desktop behavior</span></span></summary>
+          <div class="section-body">
         <div class="row">
           <div class="row-text"><strong>OpenClaw</strong><span class="muted">Connect the pet to your OpenClaw. It finds the local gateway on its own.</span></div>
           <label class="switch"><input type="checkbox" id="openclawEnabled" /><span></span></label>
@@ -33,10 +35,14 @@
           <div class="row-text"><strong>Always on top</strong><span class="muted">Keep the character above other windows.</span></div>
           <label class="switch"><input type="checkbox" id="alwaysOnTop" /><span></span></label>
         </div>
+          </div>
+        </details>
       </section>
 
-      <section>
-        <h2>Character</h2>
+      <section class="fold-section">
+        <details class="settings-fold" open>
+          <summary><span><h2>Characters</h2><span class="summary-note">Choose, assign, and customize</span></span></summary>
+          <div class="section-body">
         <div class="row">
           <div class="row-text"><strong>Character</strong></div>
           <div class="controls">
@@ -61,7 +67,7 @@
           </div>
         </div>
         <div class="row">
-          <div class="row-text"><strong>Agent</strong><span class="muted" id="agentHint">The OpenClaw agent this character's quick chat talks to.</span></div>
+          <div class="row-text"><strong>This character's agent</strong><span class="muted" id="agentHint">The OpenClaw agent this character's quick chat talks to.</span></div>
           <select id="agentSelect"></select>
         </div>
         <div class="row">
@@ -78,12 +84,25 @@
             <button id="revealBtn">Show files</button>
           </div>
         </div>
-        <h3>Assets <span class="muted">— several images per state; one is picked at random each time the state starts. Drop images on a row or click Add.</span></h3>
-        <div id="assets" class="assets"></div>
+        <details class="subsection" id="agentAssignmentsPanel" open>
+          <summary><span><strong>Agent characters</strong><span class="muted">Assign one character to each connected agent.</span></span></summary>
+          <div id="agentAssignments" class="assignment-list"></div>
+        </details>
+        <details class="subsection" id="assetsPanel">
+          <summary><span><strong>Character assets</strong><span class="muted">Images and animation variants for each state.</span></span></summary>
+          <div class="subsection-body">
+            <p class="muted subsection-help">Several images can be added per state; one is picked at random whenever the state starts. Drop images on a row or click Add.</p>
+            <div id="assets" class="assets"></div>
+          </div>
+        </details>
+          </div>
+        </details>
       </section>
 
-      <section>
-        <h2>Behavior</h2>
+      <section class="fold-section">
+        <details class="settings-fold">
+          <summary><span><h2>Behavior</h2><span class="summary-note">Chat, reactions, and motion</span></span></summary>
+          <div class="section-body">
         <div class="row">
           <div class="row-text"><strong>Reactions</strong><span class="muted">Change the look after a reply: happy, praise, encourage, shy, sad, tired, error or question. Decided locally from the reply text, never with an extra prompt.</span></div>
           <label class="switch"><input type="checkbox" id="reactionsEnabled" /><span></span></label>
@@ -93,7 +112,7 @@
           <label class="switch"><input type="checkbox" id="hoverChatEnabled" /><span></span></label>
         </div>
         <div class="row">
-          <div class="row-text"><strong>Speech bubble</strong><span class="muted">After you press Enter the input turns into a bubble with your message and the reply. Click it to collapse, drag its corner to resize.</span></div>
+          <div class="row-text"><strong>Speech bubble</strong><span class="muted">After you press Enter the input turns into a bubble with your message and the reply. Use its header buttons to copy, collapse, or close it; drag the corner to resize.</span></div>
           <div class="controls">
             <button id="bubbleReset" class="small">Reset size</button>
           </div>
@@ -102,11 +121,14 @@
         <div id="ambientRows" class="grid-rows"></div>
         <h3>Reaction length <span class="muted">— how long each reaction stays before the character goes back to idle.</span></h3>
         <div id="holdRows" class="grid-rows"></div>
+          </div>
+        </details>
       </section>
 
-      <section>
-        <details id="advanced">
-          <summary><h2>OpenClaw connection (advanced)</h2></summary>
+      <section class="fold-section">
+        <details id="advanced" class="settings-fold">
+          <summary><span><h2>OpenClaw connection</h2><span class="summary-note">Advanced Gateway configuration</span></span></summary>
+          <div class="section-body">
           <p class="muted">Normally nothing to do here: the pet reads <code>~/.openclaw/openclaw.json</code> and connects to the local gateway. Use this for a remote gateway or if the token could not be read.</p>
           <div class="row">
             <div class="row-text"><strong>Mode</strong></div>
@@ -116,6 +138,7 @@
           <div class="row"><div class="row-text"><strong>Token</strong><span class="muted">openclaw gateway auth-token --show</span></div><input id="gwToken" type="password" placeholder="leave empty to auto-detect" /></div>
           <div class="row"><div class="row-text"><strong>Password</strong></div><input id="gwPassword" type="password" placeholder="only for password auth" /></div>
           <div class="row"><div></div><button id="gwSave" class="primary">Save &amp; reconnect</button></div>
+          </div>
         </details>
       </section>
 

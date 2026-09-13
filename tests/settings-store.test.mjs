@@ -7,8 +7,9 @@ import { SettingsStore, migrateSettings } from "../dist/tests/settings-store.js"
 
 test("a v1 settings.json loads with the new defaults filled in", () => {
   const s = migrateSettings({ openclawEnabled: false, size: 200, ambientMotionEnabled: false, reactionDurationMs: 5000 });
-  assert.equal(s.settingsVersion, 2);
+  assert.equal(s.settingsVersion, 3);
   assert.equal(s.openclawEnabled, false);
+  assert.equal(s.petVisible, true);
   assert.equal(s.size, 200);
   assert.equal(s.ambientMotion.idle.enabled, false);
   assert.equal(s.ambientMotion.thinking.intensity, 1);
@@ -27,7 +28,7 @@ test("v1 ambientMotionEnabled=true turns every state on", () => {
 
 test("an empty or corrupt file yields defaults", () => {
   const s = migrateSettings(null);
-  assert.equal(s.settingsVersion, 2);
+  assert.equal(s.settingsVersion, 3);
   assert.equal(s.characterId, "momo");
 });
 
@@ -43,13 +44,16 @@ test("values are clamped and partial record patches merge", () => {
   assert.equal(s.reactionHoldMs.error, 1000);
   assert.equal(s.reactionHoldMs.question, 12000);
   assert.equal(s.bubble.width, 640);
+  s = store.update({ petVisible: false });
+  assert.equal(s.petVisible, false);
   // persisted and reloadable
   const again = new SettingsStore(dir).get();
   assert.equal(again.ambientMotion.thinking.enabled, true);
   assert.equal(again.bubble.width, 640);
   // the file never carries the legacy keys
   const json = JSON.parse(readFileSync(join(dir, "settings.json"), "utf8"));
-  assert.equal(json.settingsVersion, 2);
+  assert.equal(json.settingsVersion, 3);
+  assert.equal(json.petVisible, false);
   assert.equal("reactionDurationMs" in json, false);
 });
 

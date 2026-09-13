@@ -51,6 +51,7 @@ export function createPetWindow(params: {
   html: string;
   size: number;
   alwaysOnTop: boolean;
+  visible: boolean;
   position?: { x: number; y: number };
 }): BrowserWindow {
   const { width, height } = petWindowBounds(params.size);
@@ -94,7 +95,7 @@ export function createPetWindow(params: {
     return { action: "deny" };
   });
   void win.loadFile(params.html);
-  win.once("ready-to-show", () => win.show());
+  if (params.visible) win.once("ready-to-show", () => win.showInactive());
   return win;
 }
 

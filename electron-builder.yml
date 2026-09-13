@@ -3,7 +3,10 @@ productName: OpenClaw Pet
 directories:
   output: release
 files:
-  - dist/**/*
+  - dist/main/**/*
+  - dist/preload/**/*
+  - dist/renderer/**/*
+  - '!dist/**/*.map'
   - assets/**/*
   - package.json
 asar: true

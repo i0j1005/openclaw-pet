@@ -14,7 +14,9 @@ import {
   type ConnectionInfo,
   type GatewaySettings,
   type PetSnapshot,
+  type QuickChatActionResult,
   type QuickChatResult,
+  type QuickChatSessionOption,
   type ReactionKind,
   type ReactionState,
 } from "../../shared/types";
@@ -55,6 +57,8 @@ const BACKOFF_MIN_MS = 1_000;
 const BACKOFF_MAX_MS = 30_000;
 const REACTION_MIN_VISIBLE_MS = 2_500;
 const STALE_RUN_MS = 10 * 60_000;
+const CHAT_STREAM_THROTTLE_MS = 50;
+const MAX_TRACKED_SESSIONS = 100;
 /** Session key fragments that are background/automation and should not drive the pet. */
 const IGNORED_SESSION_FRAGMENTS = [":cron:", ":heartbeat", ":hook:", ":webhook:", "explicit:model-run-", "incognito-"];
 
@@ -66,14 +70,21 @@ export class OpenClawController extends EventEmitter {
   private reactionHoldMs: Record<ReactionKind, number> = { ...DEFAULT_SETTINGS.reactionHoldMs };
   /** Agent the active character is bound to; null = any agent, most recent session. */
   private targetAgentId: string | null = null;
+  /** Optional exact session chosen in the pet popover. Cleared when the character's agent changes. */
+  private targetSessionKey: string | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private reactionTimer: NodeJS.Timeout | null = null;
   private backoffMs = BACKOFF_MIN_MS;
   private runs = new Map<string, ActiveRun>();
   private sessions = new Map<string, SessionRow>();
-  private myRunIds = new Set<string>();
+  /** Quick chats awaiting a terminal reply, bounded by the same stale timeout as observed runs. */
+  private myRunIds = new Map<string, { sessionKey: string; startedAt: number }>();
   /** Sessions the gateway reports as running (sessions.changed / user transcript entries), keyed by session. */
   private activeSessions = new Map<string, number>();
+  private pendingStreamStatus: ChatStatusUpdate | null = null;
+  private streamStatusTimer: NodeJS.Timeout | null = null;
+  private lastChatStatusSignature = "";
+  private lastSnapshotSignature = "";
   private subscribedKey: string | null = null;
   private lastReplyKey = "";
   private lastReply?: { text: string; at: number };
@@ -116,6 +127,7 @@ export class OpenClawController extends EventEmitter {
     const next = agentId?.trim() || null;
     if (next === this.targetAgentId) return;
     this.targetAgentId = next;
+    this.targetSessionKey = null;
     this.opts.log?.(`target agent → ${next ?? "(any)"}`);
     this.emit("connection", this.getConnection());
     void this.syncMessageSubscription();
@@ -151,6 +163,42 @@ export class OpenClawController extends EventEmitter {
     }
   }
 
+  /** Recent user conversations already held in memory. This does not call a model. */
+  listSessions(agentId?: string): QuickChatSessionOption[] {
+    const wanted = agentId?.trim() || this.targetAgentId;
+    return [...this.sessions.values()]
+      .filter((row) => this.isSelectableSession(row) && (!wanted || sessionAgentId(row) === wanted))
+      .sort((a, b) => (b.lastInteractionAt ?? b.updatedAt ?? 0) - (a.lastInteractionAt ?? a.updatedAt ?? 0))
+      .slice(0, 10)
+      .map((row) => ({
+        key: row.key,
+        label: this.sessionLabel(row),
+        ...(sessionAgentId(row) ? { agentId: sessionAgentId(row) } : {}),
+        ...(row.lastInteractionAt ?? row.updatedAt ? { lastInteractionAt: row.lastInteractionAt ?? row.updatedAt } : {}),
+        ...(row.key === this.targetSessionKey ? { selected: true } : {}),
+      }));
+  }
+
+  /** Pins quick chat to one recent session, or clears the pin to resume automatic targeting. */
+  setTargetSession(sessionKey: string | null): QuickChatActionResult {
+    const key = sessionKey?.trim() || null;
+    if (!key) {
+      this.targetSessionKey = null;
+      this.emit("connection", this.getConnection());
+      void this.syncMessageSubscription();
+      return { ok: true };
+    }
+    const row = this.sessions.get(key);
+    if (!row || !this.isSelectableSession(row)) return { ok: false, error: "That recent session is no longer available." };
+    if (this.targetAgentId && sessionAgentId(row) !== this.targetAgentId) {
+      return { ok: false, error: "That session belongs to a different agent." };
+    }
+    this.targetSessionKey = key;
+    this.emit("connection", this.getConnection());
+    void this.syncMessageSubscription();
+    return { ok: true };
+  }
+
   getSnapshot(): PetSnapshot {
     return {
       activity: this.activity(),
@@ -171,7 +219,7 @@ export class OpenClawController extends EventEmitter {
     await this.syncMessageSubscription();
     const route = await this.resolveDeliveryRoute(target);
     const runId = randomUUID();
-    this.myRunIds.add(runId);
+    this.myRunIds.set(runId, { sessionKey: target.key, startedAt: Date.now() });
     try {
       const res = await this.client.request<{ runId?: string; status?: string }>("chat.send", {
         sessionKey: target.key,
@@ -183,8 +231,9 @@ export class OpenClawController extends EventEmitter {
       this.opts.log?.(`chat.send → ${JSON.stringify(res).slice(0, 300)}`);
       const actualRunId = typeof res?.runId === "string" ? res.runId : runId;
       if (actualRunId !== runId) {
+        const pending = this.myRunIds.get(runId)!;
         this.myRunIds.delete(runId);
-        this.myRunIds.add(actualRunId);
+        this.myRunIds.set(actualRunId, pending);
       }
       this.activeSessions.set(target.key, Date.now());
       this.emitChatStatus({ runId: actualRunId, phase: "sent" });
@@ -192,6 +241,36 @@ export class OpenClawController extends EventEmitter {
       return { ok: true, runId: actualRunId };
     } catch (err) {
       this.myRunIds.delete(runId);
+      return { ok: false, error: friendlyRequestError(err as GatewayError) };
+    }
+  }
+
+  /** Stops one quick-chat run using the gateway's official chat.abort method. */
+  async abortQuickChat(runId?: string): Promise<QuickChatActionResult> {
+    const client = this.client;
+    if (!client?.connected) return { ok: false, error: "OpenClaw is not connected." };
+    const pendingEntry = runId
+      ? ([runId, this.myRunIds.get(runId)] as const)
+      : [...this.myRunIds.entries()].sort(([, a], [, b]) => b.startedAt - a.startedAt)[0];
+    if (!pendingEntry?.[1]) return { ok: false, error: "That reply is no longer running." };
+    const [id, pending] = pendingEntry as readonly [string, { sessionKey: string; startedAt: number }];
+    try {
+      const res = await client.request<{ ok?: boolean; aborted?: boolean; runIds?: string[] }>("chat.abort", {
+        sessionKey: pending.sessionKey,
+        runId: id,
+      });
+      if (res?.ok === false || res?.aborted === false) return { ok: false, error: "OpenClaw could not stop that reply." };
+      const abortedIds = new Set([id, ...(Array.isArray(res?.runIds) ? res.runIds : [])]);
+      for (const abortedId of abortedIds) {
+        const chat = this.myRunIds.get(abortedId);
+        this.myRunIds.delete(abortedId);
+        this.runs.delete(abortedId);
+        if (chat) this.activeSessions.delete(chat.sessionKey);
+      }
+      this.emitChatStatus({ runId: id, phase: "aborted" });
+      this.emitSnapshot();
+      return { ok: true };
+    } catch (err) {
       return { ok: false, error: friendlyRequestError(err as GatewayError) };
     }
   }
@@ -219,6 +298,9 @@ export class OpenClawController extends EventEmitter {
     client?.close();
     this.runs.clear();
     this.activeSessions.clear();
+    this.myRunIds.clear();
+    this.clearPendingStreamStatus();
+    this.lastChatStatusSignature = "";
     this.subscribedKey = null;
     this.setReaction(null);
     if (emitOff) this.setConnection({ status: "off" });
@@ -490,9 +572,12 @@ export class OpenClawController extends EventEmitter {
     this.setReaction(classifyOutcome({ state: "final", text }));
     // The pet's own quick chat: deliver the reply to the bubble. The run id of the transcript entry can differ
     // from the chat.send id (runtime resumes, recovery runs), so any pending quick chat on this session counts.
-    const pending = runId && this.myRunIds.has(runId) ? runId : this.myRunIds.size ? [...this.myRunIds][0] : null;
+    const pending =
+      runId && this.myRunIds.has(runId)
+        ? runId
+        : [...this.myRunIds].find(([, chat]) => chat.sessionKey === sessionKey)?.[0] ?? null;
     if (pending) {
-      this.myRunIds.clear();
+      for (const [id, chat] of this.myRunIds) if (chat.sessionKey === sessionKey) this.myRunIds.delete(id);
       this.emitChatStatus({ runId: pending, phase: "reply", text: short });
     }
     this.emitSnapshot();
@@ -543,6 +628,7 @@ export class OpenClawController extends EventEmitter {
     const now = Date.now();
     for (const [id, run] of this.runs) if (now - run.startedAt > STALE_RUN_MS) this.runs.delete(id);
     for (const [key, at] of this.activeSessions) if (now - at > STALE_RUN_MS) this.activeSessions.delete(key);
+    for (const [id, chat] of this.myRunIds) if (now - chat.startedAt > STALE_RUN_MS) this.myRunIds.delete(id);
   }
 
   private activity(): ActivityState {
@@ -571,14 +657,33 @@ export class OpenClawController extends EventEmitter {
   private rememberSession(row: SessionRow): void {
     if (row.archived) {
       this.sessions.delete(row.key);
+      if (this.targetSessionKey === row.key) this.targetSessionKey = null;
       return;
     }
     const prev = this.sessions.get(row.key);
     this.sessions.set(row.key, { ...prev, ...row });
+    this.pruneSessions();
+  }
+
+  /** Keeps months of sessions.changed traffic from growing the tray app forever. */
+  private pruneSessions(): void {
+    const excess = this.sessions.size - MAX_TRACKED_SESSIONS;
+    if (excess <= 0) return;
+    const protectedKeys = new Set(this.activeSessions.keys());
+    if (this.subscribedKey) protectedKeys.add(this.subscribedKey);
+    if (this.targetSessionKey) protectedKeys.add(this.targetSessionKey);
+    const oldest = [...this.sessions.entries()]
+      .filter(([key]) => !protectedKeys.has(key))
+      .sort(([, a], [, b]) => (a.lastInteractionAt ?? a.updatedAt ?? 0) - (b.lastInteractionAt ?? b.updatedAt ?? 0));
+    for (let i = 0; i < Math.min(excess, oldest.length); i += 1) this.sessions.delete(oldest[i][0]);
   }
 
   private isIgnoredSession(key: string): boolean {
     return IGNORED_SESSION_FRAGMENTS.some((f) => key.includes(f));
+  }
+
+  private isSelectableSession(row: SessionRow): boolean {
+    return !row.archived && !this.isIgnoredSession(row.key) && (!row.kind || ["direct", "main", "thread"].includes(row.kind));
   }
 
   /**
@@ -590,10 +695,14 @@ export class OpenClawController extends EventEmitter {
    */
   private pickTargetSession(): SessionRow | null {
     const wanted = this.targetAgentId;
+    if (this.targetSessionKey) {
+      const selected = this.sessions.get(this.targetSessionKey);
+      if (selected && this.isSelectableSession(selected) && (!wanted || sessionAgentId(selected) === wanted)) return selected;
+      this.targetSessionKey = null;
+    }
     let best: SessionRow | null = null;
     for (const row of this.sessions.values()) {
-      if (this.isIgnoredSession(row.key)) continue;
-      if (row.kind && !["direct", "main", "thread"].includes(row.kind)) continue;
+      if (!this.isSelectableSession(row)) continue;
       if (wanted && sessionAgentId(row) !== wanted) continue;
       const t = row.lastInteractionAt ?? row.updatedAt ?? 0;
       const bestT = best ? (best.lastInteractionAt ?? best.updatedAt ?? 0) : -1;
@@ -650,10 +759,14 @@ export class OpenClawController extends EventEmitter {
     if (this.connection.status !== "connected") return undefined;
     const s = this.pickTargetSession();
     if (!s) return undefined;
+    return { key: s.key, label: this.sessionLabel(s), agentId: sessionAgentId(s) };
+  }
+
+  private sessionLabel(s: SessionRow): string {
     const isMain = /^agent:[^:]+:main$/.test(s.key);
     const title = s.derivedTitle || s.displayName || (isMain ? "" : s.label) || "";
     const label = isMain ? `Main conversation${title ? ` · ${title}` : ""}` : title || s.key.split(":").slice(-2).join(" ");
-    return { key: s.key, label: truncate(label, 80), agentId: s.agentId };
+    return truncate(label, 80);
   }
 
   private setConnection(info: ConnectionInfo): void {
@@ -662,11 +775,44 @@ export class OpenClawController extends EventEmitter {
   }
 
   private emitSnapshot(): void {
-    this.emit("snapshot", this.getSnapshot());
+    const snapshot = this.getSnapshot();
+    const signature = JSON.stringify(snapshot);
+    if (signature === this.lastSnapshotSignature) return;
+    this.lastSnapshotSignature = signature;
+    this.emit("snapshot", snapshot);
   }
 
   private emitChatStatus(update: ChatStatusUpdate): void {
+    // Gateway text deltas can arrive faster than the renderer can paint. Keep the newest partial
+    // text and send at most one update per short frame window; terminal/status transitions remain
+    // immediate and cancel any now-obsolete partial update.
+    if (update.phase === "thinking" && typeof update.text === "string") {
+      this.pendingStreamStatus = update;
+      if (!this.streamStatusTimer) {
+        this.streamStatusTimer = setTimeout(() => {
+          this.streamStatusTimer = null;
+          const pending = this.pendingStreamStatus;
+          this.pendingStreamStatus = null;
+          if (pending) this.emitChatStatusNow(pending);
+        }, CHAT_STREAM_THROTTLE_MS);
+      }
+      return;
+    }
+    this.clearPendingStreamStatus();
+    this.emitChatStatusNow(update);
+  }
+
+  private emitChatStatusNow(update: ChatStatusUpdate): void {
+    const signature = JSON.stringify(update);
+    if (signature === this.lastChatStatusSignature) return;
+    this.lastChatStatusSignature = signature;
     this.emit("chatStatus", update);
+  }
+
+  private clearPendingStreamStatus(): void {
+    if (this.streamStatusTimer) clearTimeout(this.streamStatusTimer);
+    this.streamStatusTimer = null;
+    this.pendingStreamStatus = null;
   }
 }
 

@@ -13,18 +13,42 @@
         <div id="badge" aria-hidden="true"></div>
         <img id="img" alt="" draggable="false" />
         <div id="dot" title="OpenClaw status"></div>
+        <button id="replyNotice" type="button" title="Reopen latest reply" aria-label="Reopen latest reply" hidden></button>
       </div>
       <div id="chat" class="hit">
+        <button id="chatTarget" type="button" title="Choose quick-chat destination" aria-haspopup="dialog" aria-expanded="false">Current conversation</button>
+        <div id="targetPopover" role="dialog" aria-label="Quick chat target" hidden>
+          <div class="target-heading">
+            <strong>Quick chat target</strong>
+            <button id="targetClose" type="button" title="Close target picker" aria-label="Close target picker">×</button>
+          </div>
+          <label>Character<select id="targetCharacter" aria-label="Character"></select></label>
+          <label>Agent<select id="targetAgent" aria-label="Agent"></select></label>
+          <label>Recent session<select id="targetSession" aria-label="Recent session"></select></label>
+          <div id="targetHint"></div>
+        </div>
         <form id="chatForm" autocomplete="off">
-          <input id="chatInput" type="text" placeholder="Ask OpenClaw…" maxlength="4000" spellcheck="false" />
+          <textarea id="chatInput" rows="1" placeholder="Ask OpenClaw…" maxlength="4000" spellcheck="false" aria-label="Message OpenClaw"></textarea>
+          <button id="chatSend" type="submit" title="Send (Enter)" aria-label="Send message">↑</button>
         </form>
+        <div id="chatHint">Enter to send · Shift+Enter for a new line</div>
       </div>
-      <div id="bubble" class="hit" hidden title="Click to collapse or expand">
+      <div id="bubble" class="hit" hidden>
+        <div id="bubbleHeader">
+          <span id="bubbleStatus"></span>
+          <div id="bubbleActions">
+            <button id="bubblePrimary" type="button" hidden></button>
+            <button id="bubbleCopy" type="button" title="Copy reply" aria-label="Copy reply">Copy</button>
+            <button id="bubbleToggle" type="button" title="Collapse reply" aria-label="Collapse reply">−</button>
+            <button id="bubbleClose" type="button" title="Close reply" aria-label="Close reply">×</button>
+          </div>
+        </div>
         <div id="bubbleBody">
           <div id="bubbleUser"></div>
           <div id="bubbleReply"></div>
         </div>
-        <div id="bubblePill"></div>
+        <div id="bubbleFooter"><button id="bubbleEdit" type="button" title="Edit and resend this question" hidden>Edit &amp; resend</button></div>
+        <button id="bubblePill" type="button" title="Expand reply" aria-label="Expand reply"></button>
         <div id="bubbleGrip" title="Drag to resize"></div>
       </div>
     </div>

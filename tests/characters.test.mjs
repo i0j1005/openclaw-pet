@@ -96,14 +96,24 @@ test("setAgent stores and clears the target agent", () => {
   assert.equal("agentId" in JSON.parse(readFileSync(join(lib.dir("nina"), "character.json"), "utf8")), false);
 });
 
-test("duplicate copies every variant and the agent binding", () => {
+test("assigning an agent moves it to one character", () => {
+  const { dir, img } = scratch();
+  const lib = new CharacterLibrary(dir, join(dir, "no-bundled"));
+  lib.add("Nina", img("a.png"), "research");
+  lib.add("Momo", img("b.png"));
+  assert.equal(lib.setAgent("momo", "research").agentId, "research");
+  assert.equal(lib.get("nina").agentId, undefined);
+});
+
+test("duplicate copies every variant but starts without an agent", () => {
   const { dir, img } = scratch();
   const lib = new CharacterLibrary(dir, join(dir, "no-bundled"));
   lib.add("Dup", img("a.png"), "coder");
   lib.addAssetVariant("dup", "idle", img("b.png"));
   const copy = lib.duplicate("dup");
   assert.equal(copy.id, "dup-copy");
-  assert.equal(copy.agentId, "coder");
+  assert.equal(copy.agentId, undefined);
+  assert.equal(lib.get("dup").agentId, "coder");
   assert.equal(copy.assets.idle.length, 2);
   assert.ok(copy.assets.idle.every((p) => p.startsWith(lib.dir("dup-copy"))));
 });

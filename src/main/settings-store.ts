@@ -95,6 +95,7 @@ function mergeSettings(base: Settings, patch: SettingsPatch): Settings {
 
 function normalizeSettings(s: Settings): Settings {
   s.settingsVersion = SETTINGS_VERSION;
+  s.petVisible = Boolean(s.petVisible);
   s.size = clamp(Math.round(s.size), 48, 640);
   for (const state of AMBIENT_STATES) {
     const m = s.ambientMotion[state];
